@@ -9,12 +9,12 @@ All signatures are confirmed and state was re-read after each step.
 
 | Step | Signature | State after |
 | --- | --- | --- |
-| Deploy | `4rsse9mzLnyhTqokhb4rnmSXsi96jyH7TfA8rV7BPYJAFmfF1Ezt2FfZATNyvwHmJGcTTWNsAHrgGTEXHi5Euv51` | |
+| Deploy (later upgraded with `reduce_hedge` and received-amount transfers) | `4rsse9mzLnyhTqokhb4rnmSXsi96jyH7TfA8rV7BPYJAFmfF1Ezt2FfZATNyvwHmJGcTTWNsAHrgGTEXHi5Euv51` | |
 | Initialize (ratio 50%) | `3frM1MqaXCVH6NYMRR8NrUs8vi38gPYWLyKd32isqp6xRU1fNjEdgEWKWFV3joYrySRnQDGMze6GMB8jcPHcgcHn` | Velocity user owned by the PDA |
 | Deposit 60 dUSDT | `275xzdBsjP5sLZhePjZfNF7p6e8Pcy6QuKXcgdY2NjahdXiEiPHPQ6CCPn4oi9H3zNGMmiqycr1BFp2qRJvx1eP5` | |
 | Deposit 0.1001 SOL | `2vDxhm8XWY2WzdJAaRUXRVdDF2QpQ5moxGGkjwQDJcJXFz3CxtUJBrmMPvQPzp8BzZhHgXP133ufZ2dNnby6ZhYH` | SOL 0.100099999 |
 | Rebalance, FullFill (attempt 35 of oracle-triggered sends) | `26PqZKeEEedW53LQzBrkSPGMN4tdSCgV3RU7ci4ofEXTNdndkteeEoRQLYsQKtA7GvpMFv5rkL9cPAQLQBHM43ca` | short 0.05, 158,830 CU |
-| Owner arms one-use rule (SOL >= 95% of spot, release 0.04) | see `nelta-rule.log` | nonce 2 |
+| Owner arms one-use rule (SOL >= 95% of spot, release 0.04) | `vLAo4fVb1AivHYxB3gPsB57DwYDbrwa3F4mkvVCeJAg6eMThiDYorH7kKzsQhcR2DMMbXc9A2DgY2rAdVJnR8NR` | nonce 2 |
 | **Keeper executes rule: reduce + release in one instruction** (attempt 8) | `36xbUofrP16p9KSJumH1heTvaPHd9G8PetGP1yBpYFS9yFHjLHMshny98Gr4JRR1RCWJFyrPxZhEgxBtTUW8ZwAP` | SOL 0.060099998, short 0.03, owner +0.04 wSOL, 232,804 CU |
 | Recovery: ratio 0 + resting reduce-only order (keeper filled ~40 s) | `24WSGkbAUuU6vvoL33aaZcPzBcEtAVJuZHaEPax3SPcaTz5LAR1i9P68uJmCmREAxgoDrRv6fwbQsBTUn3Q2h6p6` | short 0 |
 | Recovery: release all SOL | `49TLztnx9sFR5Ck3UQ1ngYEUS8kPb8Gp5zCs6Ss6nZNEimCk831ySbqXoWedU31Gq2rW9R678VJCGHTMLqkqmDYK` | owner wSOL 0.100099998 |
