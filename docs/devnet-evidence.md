@@ -48,3 +48,22 @@ execute after revoke (RuleInactive), replay of an executed rule (RuleInactive).
 | `worker.ts` (keeper key only) executes at 117.06 USD, attempt 9 | `1DQRdSGpYVuKMUG7sMzWcNwQFcPMbb7Ey21qxhcAVUoGjuyCXGgrtW3JHeRdudL1XqbPc5qZkE9EYBjX2s8Ncyy` | SOL 0.060099998, short 0.03, owner +0.04 wSOL, rule inactive |
 
 All ten rejection checks above were re-run against the upgraded program and passed.
+
+## Android app run (emulator + MWA fake wallet, app-owned position)
+
+Owner `EmHzvQyjdmnJRcR3yPNzXAJQFydKwzu4JoH1CbvtGruc`, funded with 0.2 SOL and 25 dUSDT. Every step except the keeper run was signed in the app through Mobile Wallet Adapter.
+
+| Step | Signature | State after (as shown in the app) |
+| --- | --- | --- |
+| Create position (50%) | `66DJ28ms8dhzKAaTr4Qf5KRm8HCKLrKDY2y5GDkkNrV9CcRNUDA6ZQrPsh6jP6FFQahDEvN8MQ2UyT95gYZzfrQv` | position exists |
+| Deposit 25 dUSDT collateral, then 0.1001 SOL | `58sHdWhbvx7zgqdk2gqKuCX7hWyNdwqEwVaGGwyvFuWBe3EN1JnkVmUyWG9uESdbAMuGBJzMAe3gUbzLJfUpTDVW` (SOL) | SOL 0.1001, collateral 25.00 dUSDT |
+| Sync hedge (durable-nonce retries) | `2Yvk3wtYo5nYtSi5CEiQdyE1Ge55rohH9UfLmQ9HH19KGZSXXVU86AZSbP1hEQXp1LkwEEiwnEkqM1pew8Rcazz3` | short 0.05, in sync |
+| Arm rule (SOL >= 118.00, release 0.04, 24h), then app force-stopped | `3u3s1hauYDT2FjQGV9X5QyaM8H28n6W1mvM1DcrsRfEd88NTvkcJ96oKUZwHtzLQEvcHuBN6EFHppPB8Zt8gca2U` | rule active, nonce 1 |
+| `worker.ts` executes at 118.43 USD, attempt 3, app not running | `499aiKy2zeFVpu2xHSD7odSjRVgbUyzhN5qcY7byEE2tQHcYqotfMqotsLdxkg9N1UTYzpfbZ1A7GG8u36RJBUQX` | SOL 0.0601, short 0.03, owner +0.04 wSOL, rule inactive |
+| Release with hedge 0.02 SOL | `5cDPshv9PMVSs1KxYnUdMqR3M8b5wUZufzTQcisG5ZZopjbmu1QDbyRoU7MzqJRKmd2umWwVt52WcG6YDnHaA39v` | SOL 0.0401, short 0.02 |
+| Recovery 1: close hedge (reduce-only, filled by Velocity keepers) | `39DYPwwMtX1pA6XtMvxmGYci1AGtQzkiNztznCuBC3K9S41NXJrmCPmyt5anL76snCufrtijLsL6a9LTaZKp8CWb` | short 0 |
+| Recovery 2: withdraw all SOL | `3v9S7ZoBdQrgqaYsWn8RziicoYUCSPhvkcFS9mLmMTm4oCM6hRDp8QcYcAuGYXRkYngppzY88BDB1MiyUYd8AitV` | SOL 0 |
+| Recovery 3: withdraw collateral (24.84 dUSDT) | `MhziqKu11VqrSbiGki673Kbvv8kNLa3B7owWCzyyEeRwyQgu1B2grXGKPXfDxWK38i9NfyAUBNKMh7Pus51QRch` | collateral 0, wallet 24.76 dUSDT |
+
+Unfilled attempts landed as reverted transactions (`PlaceAndTakeOrderSuccessConditionFailed`, Velocity log
+"AMM has too much inventory") and changed nothing; Sync hedge needed two taps and Release needed two.
