@@ -1,6 +1,6 @@
 /**
  * Devnet lifecycle for the Nelta program. Usage: tsx src/e2e.ts <step>
- * Steps: init | fund | hedge | negative | rule | replay | recover | state
+ * Steps: init | fund | hedge | negative | rule | arm | replay | recover | state
  * Env: NELTA_OWNER_KEYPAIR (owner + fee payer), NELTA_KEEPER_KEYPAIR (independent keeper fee payer).
  */
 import { BN } from "@anchor-lang/core";
@@ -113,6 +113,7 @@ async function main() {
     await send("wrap + deposit 0.1001 SOL via Nelta", [...nelta.wrapIxs(DEPOSIT_LAMPORTS), await nelta.depositIx(1, new BN(DEPOSIT_LAMPORTS))]);
   }
 
+  if (step === "hedge" && (await nelta.fetchPosition())!.ratioBps !== 5_000) await send("owner sets ratio to 50%", [await nelta.setRatioIx(5_000)]);
   if (step === "hedge") await sendOnOracle("rebalance to 50% target (FullFill)", async () => [await nelta.rebalanceIx()]);
 
   if (step === "negative") {
@@ -146,6 +147,12 @@ async function main() {
     console.log("owner key no longer used; keeper executes alone");
     await sendOnOracle("keeper executes rule (paired reduce + release)", async () => [await nelta.executeRuleIx(keeper.publicKey, nonce)], [keeper]);
     await expectFail("keeper replays the executed rule", [await nelta.executeRuleIx(keeper.publicKey, nonce)], "RuleInactive", [keeper]);
+  }
+
+  if (step === "arm") {
+    const trigger = price().muln(95).divn(100);
+    const expiry = Math.floor(Date.now() / 1000) + 3600;
+    await send(`owner arms one-use rule (SOL >= ${convertToNumber(trigger)}, release 0.04 SOL) and goes offline`, [await nelta.setRuleIx(trigger, true, new BN(RELEASE_LAMPORTS), expiry)]);
   }
 
   if (step === "replay") {

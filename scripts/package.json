@@ -4,7 +4,8 @@
   "type": "commonjs",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "e2e": "tsx src/e2e.ts"
+    "e2e": "tsx src/e2e.ts",
+    "worker": "tsx src/worker.ts"
   },
   "dependencies": {
     "@anchor-lang/core": "1.0.2",

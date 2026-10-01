@@ -39,3 +39,18 @@ npx tsx src/e2e.ts recover   # owner closes the hedge and withdraws everything
 ```
 
 `NELTA_OWNER_KEYPAIR` and `NELTA_KEEPER_KEYPAIR` point to keypair files (never committed).
+
+## Keeper worker
+
+`scripts/src/worker.ts` executes armed one-use rules. It holds only a fee-payer key
+(`NELTA_KEEPER_KEYPAIR`), discovers positions from chain, and on every SOL oracle update submits
+`execute_rule` for rules that are triggered, unexpired and backed by a fresh oracle. Venue fills that
+cannot complete revert and are retried on the next update, up to `NELTA_MAX_ATTEMPTS` per rule nonce.
+It keeps no local state, so a restart resumes from chain.
+
+```bash
+cd scripts
+npx tsx src/e2e.ts arm     # owner arms a rule, then the owner process exits ("phone off")
+npm run worker             # independent keeper executes it
+npx tsx src/e2e.ts state
+```

@@ -37,3 +37,14 @@ execute after revoke (RuleInactive), replay of an executed rule (RuleInactive).
   (release still requires it to be within 1 lamport of the request).
 - The target uses floor rounding on interest-scaled balances: 0.1 SOL reads as 0.099999999 and targets 0.0499.
   The demo deposits 0.1001 SOL.
+
+## Phone-off run with the keeper worker (upgraded program)
+
+| Step | Signature | State after |
+| --- | --- | --- |
+| Re-fund 60 dUSDT + 0.1001 SOL | `2pK4Ua5jgPNCYyKQVzvsVo56w1KogcWW4DCEDCTZkcKdGHzHYGWQ3u36tM9gxnbRQumxREm8H8Y4SiqzcaMqqF2W`, `wFGSB3uDp2d7P8EyKpEQq63BfqKr8DKtjuTeM62cy3AiyB3gsmww91ET42FL8S7WniuGuBYTTTNd5FxX8e38gR3` | SOL 0.100099999 |
+| Rebalance to 50% (attempt 32, after a first run of 80 reverted attempts) | `5nmd7UK7egueMRKunDHTSGW86hhMBBKRVhCkgAFT4KXPJxiHuHjkPTmVrRq3wJwf72nx5kS1kptrTACoanAiyYqZ` | short 0.05 |
+| Owner arms rule (SOL >= 111.72) and the owner process exits | `3xBQoKQKNXWMBNLN6qcLMNtrXXXSZxHR2ERWTJFcvBnxCzN6QhS8Uaa7feDa3myqofkJo2wHWmeKQgJca6DPSA1w` | rule active, nonce 3 |
+| `worker.ts` (keeper key only) executes at 117.06 USD, attempt 9 | `1DQRdSGpYVuKMUG7sMzWcNwQFcPMbb7Ey21qxhcAVUoGjuyCXGgrtW3JHeRdudL1XqbPc5qZkE9EYBjX2s8Ncyy` | SOL 0.060099998, short 0.03, owner +0.04 wSOL, rule inactive |
+
+All ten rejection checks above were re-run against the upgraded program and passed.
