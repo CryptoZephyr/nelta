@@ -84,6 +84,27 @@ function readShort(user: Buffer): bigint {
   return 0n;
 }
 
+const POSITION_DISCRIMINATOR = Buffer.from(idl.accounts[0].discriminator);
+const u64 = (d: Buffer, o: number) => new BN(d.readBigUInt64LE(o).toString());
+
+/** Fixed Position layout; Anchor's borsh account decoder throws under Hermes. */
+export function decodePosition(d: Buffer): PositionAccount {
+  if (!d.slice(0, 8).equals(POSITION_DISCRIMINATOR)) throw new Error("Not a Nelta position account");
+  return {
+    owner: new PublicKey(d.slice(8, 40)),
+    bump: d[40],
+    ratioBps: d.readUInt16LE(41),
+    ruleNonce: u64(d, 43),
+    rule: {
+      active: d[51] === 1,
+      above: d[52] === 1,
+      triggerPrice: u64(d, 53),
+      releaseLamports: u64(d, 61),
+      expiryTs: new BN(d.readBigInt64LE(69).toString()),
+    },
+  };
+}
+
 /** Same floor-to-step formula the program enforces. */
 export function targetShort(held: bigint, ratioBps: number, step: bigint): bigint {
   return ((held * BigInt(ratioBps)) / BigInt(BPS) / step) * step;
@@ -134,7 +155,7 @@ export class Nelta {
       uiAmount(this.connection, this.ownerToken(DUSDT_MINT)),
       uiAmount(this.connection, this.ownerToken(WSOL_MINT)),
     ]);
-    const position = pos ? (this.program.coder.accounts.decode("position", pos.data) as PositionAccount) : null;
+    const position = pos ? decodePosition(Buffer.from(pos.data)) : null;
     const solLamports = user && spot ? readSol(user.data, spot.data) : 0n;
     const shortBase = user ? readShort(user.data) : 0n;
     const step = perp ? perp.data.readBigUInt64LE(PERP_ORDER_STEP_SIZE) : 1n;

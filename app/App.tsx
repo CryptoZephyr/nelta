@@ -39,6 +39,7 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState("");
   const [above, setAbove] = useState(true);
   const [releaseAmt, setReleaseAmt] = useState("0.04");
@@ -51,8 +52,9 @@ export default function App() {
     if (!nelta) return;
     try {
       setSnap(await nelta.snapshot());
+      setReadError(null);
     } catch (e) {
-      setMessage(`Could not read chain: ${(e as Error).message}`);
+      setReadError(`Could not read chain: ${(e as Error).message}`);
     }
   }, [nelta]);
 
@@ -67,7 +69,7 @@ export default function App() {
     setMessage(null);
     try {
       const sig = await fn();
-      setMessage(`${label}: confirmed ${sig.slice(0, 8)}…`);
+      if (sig) setMessage(`${label}: confirmed ${sig.slice(0, 8)}…`);
     } catch (e) {
       setMessage(`${label} failed: ${(e as Error).message}`);
     } finally {
@@ -105,7 +107,7 @@ export default function App() {
           <Text style={s.body}>
             Arm a one-use rule like “if SOL ≥ $X, release 0.04 SOL and shrink my short”. A keeper runs it while your phone is off. It can only reduce risk and only pays you.
           </Text>
-          <Btn label="Connect wallet" onPress={() => run("Connect", async () => { setOwner(await connect()); return "wallet"; })} />
+          <Btn label="Connect wallet" onPress={() => run("Connect", async () => { setOwner(await connect()); return ""; })} />
           {message && <Text style={s.msg}>{message}</Text>}
           <Text style={s.foot}>Devnet · Mobile Wallet Adapter</Text>
         </View>
@@ -133,6 +135,7 @@ export default function App() {
           <View style={s.banner}><ActivityIndicator color="#0b0f14" /><Text style={s.bannerText}>{busy}</Text></View>
         )}
         {message && <Text style={s.msg}>{message}</Text>}
+        {readError && <Text style={s.msg}>{readError}</Text>}
 
         {!snap ? (
           <ActivityIndicator color="#fff" style={{ marginTop: 40 }} />
