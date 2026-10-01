@@ -4,6 +4,7 @@ import {
   AccountMeta,
   ComputeBudgetProgram,
   Connection,
+  NONCE_ACCOUNT_LENGTH,
   PublicKey,
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
@@ -25,6 +26,7 @@ export const DUSDT_MINT = new PublicKey("GqmEqYsy8EyvofDpmtFxK8zhYrgWgNokAtYoduQ
 export const WSOL_MINT = spl.NATIVE_MINT;
 export const LAMPORTS = 1_000_000_000;
 export const PRICE_PRECISION = 1_000_000;
+const NONCE_SEED = "nelta-nonce";
 const BPS = 10_000;
 const MAX_ORACLE_AGE_SECS = 30;
 
@@ -52,6 +54,7 @@ export interface Snapshot {
   oracleAgeSecs: number;
   walletLamports: number;
   walletDusdt: number;
+  collateralBase: bigint;
   ownerWsol: number;
 }
 
@@ -63,16 +66,17 @@ export function parseOracle(data: Buffer): { price: bigint; publishTs: number } 
   return { price, publishTs };
 }
 
-function readSol(user: Buffer, spotMarket: Buffer): bigint {
+/** Deposit balance of a spot market in token base units; `decimals` is the market's mint decimals. */
+function readSpot(user: Buffer, spotMarket: Buffer, marketIndex: number, decimals: number): bigint {
   let scaled = 0n;
   for (let i = 0; i < 8; i++) {
     const o = USER_SPOT_POSITIONS + i * SPOT_POSITION_SIZE;
     const balance = user.readBigUInt64LE(o);
-    if (user.readUInt16LE(o + 32) === 1 && balance > 0n && user[o + 34] === 0) scaled = balance;
+    if (user.readUInt16LE(o + 32) === marketIndex && balance > 0n && user[o + 34] === 0) scaled = balance;
   }
   const lo = spotMarket.readBigUInt64LE(SPOT_CUMULATIVE_DEPOSIT_INTEREST);
   const hi = spotMarket.readBigUInt64LE(SPOT_CUMULATIVE_DEPOSIT_INTEREST + 8);
-  return (scaled * ((hi << 64n) | lo)) / SPOT_CUMULATIVE_INTEREST_PRECISION;
+  return (scaled * ((hi << 64n) | lo)) / SPOT_CUMULATIVE_INTEREST_PRECISION / 10n ** BigInt(9 - decimals);
 }
 
 function readShort(user: Buffer): bigint {
@@ -145,10 +149,11 @@ export class Nelta {
   ownerToken = (mint: PublicKey) => spl.getAssociatedTokenAddressSync(mint, this.owner);
 
   async snapshot(): Promise<Snapshot> {
-    const [pos, user, spot, perp, oracle, walletLamports, walletDusdt, ownerWsol] = await Promise.all([
+    const [pos, user, spot, quoteSpot, perp, oracle, walletLamports, walletDusdt, ownerWsol] = await Promise.all([
       this.connection.getAccountInfo(this.position),
       this.connection.getAccountInfo(this.venue.velocityUser),
       this.connection.getAccountInfo(SOL_SPOT_MARKET),
+      this.connection.getAccountInfo(QUOTE_SPOT_MARKET),
       this.connection.getAccountInfo(SOL_PERP_MARKET),
       this.connection.getAccountInfo(SOL_ORACLE),
       this.connection.getBalance(this.owner),
@@ -156,7 +161,8 @@ export class Nelta {
       uiAmount(this.connection, this.ownerToken(WSOL_MINT)),
     ]);
     const position = pos ? decodePosition(Buffer.from(pos.data)) : null;
-    const solLamports = user && spot ? readSol(user.data, spot.data) : 0n;
+    const solLamports = user && spot ? readSpot(user.data, spot.data, 1, 9) : 0n;
+    const collateralBase = user && quoteSpot ? readSpot(user.data, quoteSpot.data, 0, 6) : 0n;
     const shortBase = user ? readShort(user.data) : 0n;
     const step = perp ? perp.data.readBigUInt64LE(PERP_ORDER_STEP_SIZE) : 1n;
     const o = oracle ? parseOracle(oracle.data) : { price: 0n, publishTs: 0 };
@@ -169,6 +175,7 @@ export class Nelta {
       oracleAgeSecs: Math.max(0, Math.floor(Date.now() / 1000) - o.publishTs),
       walletLamports,
       walletDusdt: walletDusdt / 1e6,
+      collateralBase,
       ownerWsol: ownerWsol / LAMPORTS,
     };
   }
@@ -285,6 +292,43 @@ export class Nelta {
 
   async revokeRuleIxs(): Promise<TransactionInstruction[]> {
     return [await this.program.methods.revokeRule().accountsStrict({ owner: this.owner, position: this.position }).instruction()];
+  }
+
+  /** Owner-authorised durable nonces, so signed fill attempts can be retried across oracle updates without expiring. */
+  nonceAddress(i: number): Promise<PublicKey> {
+    return PublicKey.createWithSeed(this.owner, `${NONCE_SEED}-${i}`, SystemProgram.programId);
+  }
+
+  async createNonceIxs(indices: number[]): Promise<TransactionInstruction[]> {
+    const lamports = await this.connection.getMinimumBalanceForRentExemption(NONCE_ACCOUNT_LENGTH);
+    const ixs: TransactionInstruction[] = [];
+    for (const i of indices) {
+      const noncePubkey = await this.nonceAddress(i);
+      ixs.push(
+        SystemProgram.createAccountWithSeed({
+          fromPubkey: this.owner,
+          newAccountPubkey: noncePubkey,
+          basePubkey: this.owner,
+          seed: `${NONCE_SEED}-${i}`,
+          lamports,
+          space: NONCE_ACCOUNT_LENGTH,
+          programId: SystemProgram.programId,
+        }),
+        SystemProgram.nonceInitialize({ noncePubkey, authorizedPubkey: this.owner }),
+      );
+    }
+    return ixs;
+  }
+
+  durableTx(ixs: TransactionInstruction[], noncePubkey: PublicKey, nonce: string): Transaction {
+    const t = new Transaction().add(
+      SystemProgram.nonceAdvance({ noncePubkey, authorizedPubkey: this.owner }),
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
+      ...ixs,
+    );
+    t.feePayer = this.owner;
+    t.recentBlockhash = nonce;
+    return t;
   }
 
   /** `variant` changes the priority fee so batch-signed retries have distinct signatures. */

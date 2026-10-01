@@ -1,37 +1,60 @@
 import { BN } from "@anchor-lang/core";
-import { Connection, PublicKey, Transaction } from "@solana/web3.js";
+import { Connection, NonceAccount, PublicKey, Transaction } from "@solana/web3.js";
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, RefreshControl, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { LAMPORTS, Nelta, RPC, Snapshot, SOL_ORACLE } from "./src/nelta";
 import { connect, disconnect, signAndSend, signBatch } from "./src/wallet";
 
 const connection = new Connection(RPC, "confirmed");
-const BATCH = 12;
+const FILL_ATTEMPTS = 40;
+const NONCES = 4;
+const SIGN_ROUNDS = 3;
 const sol = (lamports: bigint | number) => (Number(lamports) / LAMPORTS).toFixed(4);
-const nextOracleUpdate = () =>
-  new Promise<void>((resolve) => {
-    const id = connection.onAccountChange(SOL_ORACLE, () => { void connection.removeAccountChangeListener(id); resolve(); }, { commitment: "processed" });
-    setTimeout(resolve, 8_000);
-  });
+/** Polls rather than subscribes: websocket subscriptions are unreliable on mobile networks. */
+async function nextOracleUpdate(timeoutMs = 6_000): Promise<void> {
+  const read = async () => (await connection.getAccountInfo(SOL_ORACLE, "processed").catch(() => null))?.data;
+  const start = await read();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1_000));
+    const now = await read();
+    if (start && now && !now.equals(start)) return;
+  }
+}
 
-/** Submits pre-signed variants one per oracle update until one confirms; failed fills revert whole. */
-async function submitUntilFilled(txs: Transaction[], onAttempt: (n: number) => void): Promise<string> {
+const FILL_ERROR = /0x1891|6289|SuccessCondition/i;
+
+/**
+ * Resubmits one durable-nonce transaction on each oracle update until it fills. Preflight-rejected attempts never land,
+ * so the same signature stays valid; returns null if an attempt landed unfilled (reverted whole, nonce consumed).
+ */
+async function submitUntilFilled(tx: Transaction, attempts: number, onAttempt: (n: number) => void): Promise<string | null> {
+  const raw = tx.serialize();
   let last = "no attempts";
-  for (let i = 0; i < txs.length; i++) {
-    onAttempt(i + 1);
+  for (let i = 1; i <= attempts; i++) {
+    onAttempt(i);
     await nextOracleUpdate();
+    let sig: string;
     try {
-      const sig = await connection.sendRawTransaction(txs[i].serialize(), { skipPreflight: false });
-      const res = await connection.confirmTransaction(sig, "confirmed");
-      if (!res.value.err) return sig;
-      last = JSON.stringify(res.value.err);
+      sig = await connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: "processed" });
     } catch (e) {
-      last = String((e as Error).message ?? e).slice(0, 120);
-      if (!/0x1891|SuccessCondition|blockhash/i.test(last)) throw new Error(last);
+      last = (e instanceof Error ? e.message : JSON.stringify(e)).slice(0, 160);
+      if (!/0x1891|SuccessCondition|fetch failed|network|429/i.test(last)) throw new Error(last);
+      continue;
+    }
+    for (let k = 0; k < 30; k++) {
+      const st = (await connection.getSignatureStatus(sig).catch(() => null))?.value;
+      if (st?.err) {
+        const err = JSON.stringify(st.err);
+        if (FILL_ERROR.test(err)) return null;
+        throw new Error(err);
+      }
+      if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return sig;
+      await new Promise((r) => setTimeout(r, 1_000));
     }
   }
-  throw new Error(`No fill after ${txs.length} attempts (${last}). Nothing changed; try again.`);
+  throw new Error(`No fill after ${attempts} attempts (${last}). Nothing changed; try again.`);
 }
 
 export default function App() {
@@ -39,6 +62,8 @@ export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const busyRef = useRef<string | null>(null);
+  busyRef.current = busy;
   const [readError, setReadError] = useState<string | null>(null);
   const [trigger, setTrigger] = useState("");
   const [above, setAbove] = useState(true);
@@ -60,7 +85,7 @@ export default function App() {
 
   useEffect(() => {
     void refresh();
-    const id = setInterval(() => void refresh(), 10_000);
+    const id = setInterval(() => { if (!busyRef.current) void refresh(); }, 10_000);
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -71,7 +96,7 @@ export default function App() {
       const sig = await fn();
       if (sig) setMessage(`${label}: confirmed ${sig.slice(0, 8)}…`);
     } catch (e) {
-      setMessage(`${label} failed: ${(e as Error).message}`);
+      setMessage(`${label} failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`);
     } finally {
       setBusy(null);
       await refresh();
@@ -91,10 +116,29 @@ export default function App() {
   const sendWithFill = (label: string, ixs: (n: Nelta) => Promise<import("@solana/web3.js").TransactionInstruction[]>) =>
     run(label, async () => {
       const n = nelta!;
-      const { blockhash } = await connection.getLatestBlockhash();
-      const built = await ixs(n);
-      const signed = await signBatch(async () => Array.from({ length: BATCH }, (_, i) => n.tx(built, blockhash, i)));
-      return submitUntilFilled(signed, (a) => setBusy(`${label}: waiting for a fill (${a}/${BATCH})`));
+      const addrs = await Promise.all(Array.from({ length: NONCES }, (_, i) => n.nonceAddress(i)));
+      const missing = (await connection.getMultipleAccountsInfo(addrs)).flatMap((a, i) => (a ? [] : [i]));
+      if (missing.length) {
+        setBusy(`${label}: one-time retry account setup`);
+        const { blockhash } = await connection.getLatestBlockhash();
+        const sig = await signAndSend(async () => n.tx(await n.createNonceIxs(missing), blockhash));
+        const res = await connection.confirmTransaction(sig, "confirmed");
+        if (res.value.err) throw new Error(JSON.stringify(res.value.err));
+      }
+      for (let round = 1; round <= SIGN_ROUNDS; round++) {
+        const infos = await connection.getMultipleAccountsInfo(addrs, "confirmed");
+        const nonces = infos.map((a) => {
+          if (!a) throw new Error("Retry account missing");
+          return NonceAccount.fromAccountData(a.data).nonce;
+        });
+        const built = await ixs(n);
+        const signed = await signBatch(NONCES, async (_, count) => nonces.slice(0, count).map((nonce, i) => n.durableTx(built, addrs[i], nonce)));
+        for (const [i, t] of signed.entries()) {
+          const sig = await submitUntilFilled(t, FILL_ATTEMPTS, (a) => setBusy(`${label}: waiting for a fill (${round}.${i + 1}, try ${a})`));
+          if (sig) return sig;
+        }
+      }
+      throw new Error("Velocity didn't fill in time. Nothing changed; try again.");
     });
 
   if (!owner) {
@@ -198,13 +242,14 @@ export default function App() {
 
             <Card title="Add funds">
               <Stat label="Wallet" value={`${(snap.walletLamports / LAMPORTS).toFixed(3)} SOL · ${snap.walletDusdt.toFixed(2)} dUSDT`} />
+              <Stat label="Collateral in Velocity" value={`${(Number(snap.collateralBase) / 1e6).toFixed(2)} dUSDT`} />
               <Field label="Deposit SOL" value={depositAmt} onChange={setDepositAmt} />
               <Btn label="Deposit SOL" disabled={!!busy} onPress={() => send("Deposit SOL", (n) => n.depositSolIxs(Math.round(Number(depositAmt) * LAMPORTS)))} />
               {snap.walletDusdt > 0 && <Btn label={`Deposit ${snap.walletDusdt.toFixed(2)} dUSDT collateral`} kind="ghost" disabled={!!busy} onPress={() => send("Deposit dUSDT", (n) => n.depositDusdtIxs(snap.walletDusdt))} />}
             </Card>
 
             <Card title="Recovery">
-              <Text style={s.body}>Works without Nelta's servers. Step 1 places a reduce-only order that Velocity keepers fill; step 2 withdraws everything.</Text>
+              <Text style={s.body}>Works without Nelta's servers. Step 1 places a reduce-only order that Velocity keepers fill; steps 2–3 withdraw everything.</Text>
               <Btn label="1 · Close hedge" kind="ghost" disabled={!!busy || snap.shortBase === 0n} onPress={() => send("Close hedge", async (n) => [...(await n.setRatioIxs(0)), ...(await n.reduceHedgeIxs(snap.shortBase))])} />
               <Btn
                 label="2 · Withdraw all SOL"
@@ -212,7 +257,12 @@ export default function App() {
                 disabled={!!busy || snap.shortBase !== 0n || snap.solLamports === 0n}
                 onPress={() => send("Withdraw SOL", (n) => n.releaseIxs(snap.solLamports))}
               />
-              <Btn label="Withdraw collateral (1 dUSDT)" kind="ghost" disabled={!!busy} onPress={() => send("Withdraw collateral", (n) => n.withdrawCollateralIxs(new BN(1_000_000)))} />
+              <Btn
+                label={`3 · Withdraw collateral (${(Number(snap.collateralBase) / 1e6).toFixed(2)} dUSDT)`}
+                kind="ghost"
+                disabled={!!busy || snap.shortBase !== 0n || snap.collateralBase === 0n}
+                onPress={() => send("Withdraw collateral", (n) => n.withdrawCollateralIxs(new BN(snap.collateralBase.toString())))}
+              />
             </Card>
           </>
         )}
