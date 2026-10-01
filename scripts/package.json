@@ -1,0 +1,21 @@
+{
+  "name": "nelta-scripts",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "e2e": "tsx src/e2e.ts",
+    "worker": "tsx src/worker.ts"
+  },
+  "dependencies": {
+    "@anchor-lang/core": "1.0.2",
+    "@solana/spl-token": "0.4.13",
+    "@solana/web3.js": "1.99.0",
+    "@velocity-exchange/sdk": "0.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "tsx": "4.19.4",
+    "typescript": "5.8.3"
+  }
+}
