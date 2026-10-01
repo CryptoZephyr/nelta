@@ -1,0 +1,30 @@
+{
+  "name": "nelta-app",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@anchor-lang/core": "1.0.2",
+    "@solana-mobile/mobile-wallet-adapter-protocol": "2.3.0",
+    "@solana-mobile/mobile-wallet-adapter-protocol-web3js": "2.3.0",
+    "@solana/spl-token": "0.4.13",
+    "@solana/web3.js": "1.99.0",
+    "buffer": "6.0.3",
+    "expo": "57.0.24",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-get-random-values": "1.11.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "private": true
+}
