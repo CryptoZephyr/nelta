@@ -50,6 +50,7 @@ export interface Snapshot {
   solLamports: bigint;
   shortBase: bigint;
   targetShort: bigint;
+  step: bigint;
   price: number;
   oracleAgeSecs: number;
   walletLamports: number;
@@ -171,6 +172,7 @@ export class Nelta {
       solLamports,
       shortBase,
       targetShort: position ? targetShort(solLamports, position.ratioBps, step) : 0n,
+      step,
       price: Number(o.price) / PRICE_PRECISION,
       oracleAgeSecs: Math.max(0, Math.floor(Date.now() / 1000) - o.publishTs),
       walletLamports,

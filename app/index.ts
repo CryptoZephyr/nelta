@@ -2,9 +2,6 @@ import "react-native-get-random-values";
 import { Buffer } from "buffer";
 global.Buffer = global.Buffer ?? Buffer;
 
+// Required after the polyfills so web3.js sees them when routes load.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { registerRootComponent } = require("expo") as typeof import("expo");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const App = (require("./App") as typeof import("./App")).default;
-
-registerRootComponent(App);
+require("expo-router/entry");
