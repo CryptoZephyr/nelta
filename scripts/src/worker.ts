@@ -71,9 +71,11 @@ async function execute(pos: PositionAccount, o: OraclePrice): Promise<void> {
 }
 
 let busy = false;
+let lastSeen: Buffer | undefined;
 async function tick(data: Buffer): Promise<void> {
-  if (busy) return;
+  if (busy || lastSeen?.equals(data)) return;
   busy = true;
+  lastSeen = Buffer.from(data);
   try {
     const o = parseOracle(data);
     const now = Math.floor(Date.now() / 1000);
