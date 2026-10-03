@@ -54,3 +54,11 @@ npx tsx src/e2e.ts arm     # owner arms a rule, then the owner process exits ("p
 npm run worker             # independent keeper executes it
 npx tsx src/e2e.ts state
 ```
+
+## Free hosted keeper
+
+The keeper runs for free on GitHub Actions (`.github/workflows/keeper.yml`). Each run watches for about 6 hours and a schedule starts the next one, so it is almost always on (expect short gaps of a few minutes between runs).
+
+- `NELTA_KEEPER_KEYPAIR` (repo secret): a dedicated fee-payer key as a JSON byte array. It only pays fees; it can't move user funds. Keep a little Devnet SOL in it.
+- `RPC_URL` (optional repo secret): a private Devnet RPC. Defaults to the public one.
+- Start it right away from the Actions tab: "keeper" → "Run workflow".

@@ -2,7 +2,8 @@
  * Nelta keeper. Holds only a fee-payer key: it cannot sign for owners and the program only pays
  * the owner's wSOL account. All state is read from chain on every oracle tick, so a restart
  * resumes without local state. Usage: tsx src/worker.ts [--once]
- * Env: RPC_URL, NELTA_KEEPER_KEYPAIR, NELTA_MAX_ATTEMPTS (per rule nonce, default 200).
+ * Env: RPC_URL, NELTA_KEEPER_KEYPAIR (path or JSON byte array), NELTA_MAX_ATTEMPTS (per rule nonce, default 200),
+ * NELTA_POLL_MS (oracle poll fallback, default 5000).
  */
 import { BN } from "@anchor-lang/core";
 import { Connection, PublicKey, sendAndConfirmTransaction, SendTransactionError } from "@solana/web3.js";
@@ -12,6 +13,7 @@ import { NeltaClient, PositionAccount, SOL_ORACLE, withBudget } from "./client";
 const RPC = process.env.RPC_URL ?? "https://api.devnet.solana.com";
 const MAX_ATTEMPTS = Number(process.env.NELTA_MAX_ATTEMPTS ?? 200);
 const MAX_ORACLE_AGE_SECS = 30;
+const POLL_MS = Number(process.env.NELTA_POLL_MS ?? 5_000);
 const TERMINAL = /RuleInactive|StaleNonce|RuleExpired|InvalidRecipient|InvalidTokenAccount|InvalidVenueAccount|UnexpectedLong|UnexpectedBorrow/;
 
 const conn = new Connection(RPC, "confirmed");
@@ -93,6 +95,11 @@ async function main() {
     return;
   }
   conn.onAccountChange(SOL_ORACLE, (info) => void tick(info.data), { commitment: "processed" });
+  // Websocket subscriptions can drop silently on long unattended runs; polling keeps the keeper live.
+  setInterval(() => {
+    void conn.getAccountInfo(SOL_ORACLE, "processed").then((info) => info && tick(info.data)).catch(() => undefined);
+  }, POLL_MS);
+  setInterval(() => void positions().then((ps) => log(`alive: ${ps.length} position(s), ${ps.filter((p) => p.account.rule.active).length} armed`)).catch(() => undefined), 10 * 60_000);
 }
 
 if (require.main === module) void main();
