@@ -24,9 +24,17 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: scripts/package-lock.json
+      - name: Require a private RPC
+        env:
+          RPC_URL: ${{ secrets.RPC_URL }}
+        run: |
+          if [ -z "$RPC_URL" ]; then
+            echo "::error title=RPC_URL secret missing::Set the RPC_URL repo secret to a private Devnet RPC. The public endpoint rate-limits the keeper and armed rules can be missed."
+            exit 1
+          fi
       - run: npm ci
       - name: Run keeper
         env:
           NELTA_KEEPER_KEYPAIR: ${{ secrets.NELTA_KEEPER_KEYPAIR }}
-          RPC_URL: ${{ secrets.RPC_URL || 'https://api.devnet.solana.com' }}
+          RPC_URL: ${{ secrets.RPC_URL }}
         run: timeout 350m npm run worker || [ $? -eq 124 ]
