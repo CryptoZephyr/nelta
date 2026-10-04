@@ -6,13 +6,8 @@ import { Icon } from "./icons";
 import { color, font, radius, space } from "./theme";
 import { T } from "./ui";
 
-const LATEST = "https://api.github.com/repos/CryptoZephyr/nelta/releases/latest";
-
-interface Release {
-  tag_name: string;
-  html_url: string;
-  assets: { name: string; browser_download_url: string }[];
-}
+const RELEASES = "https://github.com/CryptoZephyr/nelta/releases/latest";
+const APK = `${RELEASES}/download/nelta.apk`;
 
 const parts = (v: string) => v.replace(/^v/, "").split(".").map((n) => Number.parseInt(n, 10) || 0);
 
@@ -31,12 +26,10 @@ function useUpdate(): { version: string; url: string } | null {
     const current = Constants.expoConfig?.version;
     if (!current) return;
     let live = true;
-    fetch(LATEST, { headers: { Accept: "application/vnd.github+json" } })
-      .then((r) => (r.ok ? (r.json() as Promise<Release>) : null))
-      .then((rel) => {
-        if (!live || !rel || !isNewer(rel.tag_name, current)) return;
-        const apk = rel.assets.find((a) => a.name.endsWith(".apk"));
-        setUpdate({ version: rel.tag_name.replace(/^v/, ""), url: apk?.browser_download_url ?? rel.html_url });
+    fetch(RELEASES, { method: "HEAD" })
+      .then((r) => {
+        const tag = /\/tag\/(v?[\d.]+)$/.exec(r.url)?.[1];
+        if (live && tag && isNewer(tag, current)) setUpdate({ version: tag.replace(/^v/, ""), url: APK });
       })
       .catch(() => undefined);
     return () => {
