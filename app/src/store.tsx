@@ -113,7 +113,7 @@ function connectIssue(e: unknown): ConnectIssue {
   const raw = e instanceof Error ? e.message : JSON.stringify(e);
   if (/ERROR_WALLET_NOT_FOUND|no.*wallet.*found|not found/i.test(raw))
     return { tone: "waiting", title: "No Solana wallet found", body: "Install Phantom or Solflare, switch it to Devnet, then tap Connect again." };
-  if (/cluster|chain|network/i.test(raw) && !/fetch/i.test(raw)) return WALLET_SILENT;
+  if (/cluster|chain/i.test(raw) && /support|mismatch|invalid|unknown/i.test(raw)) return WALLET_SILENT;
   const { title } = explain(e, false);
   return { tone: "waiting", title: title === "Something went wrong" ? "Couldn’t connect" : title, body: "Nothing was signed. Try again when you’re ready." };
 }
@@ -174,6 +174,7 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   const [flow, setFlow] = useState<{ plan: Plan; phase: Phase } | null>(null);
   const [version, setVersion] = useState(0);
   const running = useRef(false);
+  const attempt = useRef(0);
   const nelta = useMemo(() => (owner ? new Nelta(connection, owner) : null), [owner]);
 
   const refresh = useCallback(async () => {
@@ -198,19 +199,24 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const connectWallet = useCallback(async () => {
+    const id = ++attempt.current;
+    const current = () => id === attempt.current;
     setConnecting(true);
     setConnectError(null);
     const slow = setTimeout(() => {
+      if (!current()) return;
+      attempt.current++;
       setConnecting(false);
       setConnectError(WALLET_SILENT);
     }, CONNECT_TIMEOUT_MS);
     try {
-      setOwner(await connect());
+      const who = await connect();
+      if (current()) setOwner(who);
     } catch (e) {
-      setConnectError(connectIssue(e));
+      if (current()) setConnectError(connectIssue(e));
     } finally {
       clearTimeout(slow);
-      setConnecting(false);
+      if (current()) setConnecting(false);
     }
   }, []);
 
