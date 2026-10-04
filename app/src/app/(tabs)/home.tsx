@@ -11,6 +11,8 @@ import { connection, useNelta } from "../../store";
 import { color, space, tone } from "../../theme";
 import { Button, Card, Notice, Pair, Pill, Row, Segmented, Screen, T } from "../../ui";
 
+const STALE_PRICE_SECS = 120;
+
 function useKeeper(): KeeperStatus | null {
   const [k, setK] = useState<KeeperStatus | null>(null);
   useEffect(() => {
@@ -25,14 +27,14 @@ function useKeeper(): KeeperStatus | null {
 function KeeperLine({ k }: { k: KeeperStatus | null }) {
   const online = k?.online;
   const t = online ? tone.sync : tone.waiting;
-  const label = online === null || !k ? "Keeper status unknown" : online ? "Keeper online" : "Keeper offline";
+  const label = !k ? "Checking keeper…" : online === null ? "Keeper status unknown" : online ? "Keeper online" : "Keeper offline";
   return (
     <View style={hs.keeper}>
       <View style={[hs.dot, { backgroundColor: t.fg }]} />
       <View style={{ flex: 1 }}>
         <T v="label" style={{ color: color.text }}>{label}</T>
         <T v="caption">
-          {k?.lastActionTs ? `Last keeper action ${ago(k.lastActionTs)}. ` : ""}
+          {k?.lastSeenTs ? `Last seen on-chain ${ago(k.lastSeenTs)}. ` : ""}
           {online ? "Watching the price while your phone is off." : "Your SOL is safe; armed rules wait until it’s back."}
         </T>
       </View>
@@ -106,6 +108,9 @@ export default function Home() {
     <Screen refresh={refreshControl} footer={primary}>
       <Header />
       {readError && <Notice tone="waiting" title="Showing the last reading" body="Devnet is slow to answer. Pull down to refresh." />}
+      {!readError && snap.oracleAgeSecs > STALE_PRICE_SECS && (
+        <Notice tone="drift" icon="clock" title="Needs attention" body={`Velocity’s price feed hasn’t updated for ${age(snap.oracleAgeSecs)}. Hedge changes and rules wait until it’s fresh. Your SOL is safe and nothing will move.`} />
+      )}
 
       <T v="label" style={{ marginTop: space.md }}>SOL in custody</T>
       <T v="hero">{sol(snap.solLamports)} SOL</T>

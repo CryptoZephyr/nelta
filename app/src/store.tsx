@@ -253,7 +253,7 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, onSent: (
       kind: "wallet",
       why: round === 1 ? "Approve a few signed tries at once. Each try either fills fully or changes nothing." : "Those tries ran out. Approve a fresh set to keep trying.",
     });
-    const signed = await signBatch(NONCES, async (_, count) => nonces.slice(0, count).map((nonce, i) => n.durableTx(built, addrs[i], nonce)));
+    const signed = await signBatch(NONCES, async (_, count) => nonces.slice(0, count).map((nonce, i) => n.durableTx(built, addrs[i], nonce, addrs)));
     onSent();
     for (const [i, t] of signed.entries()) {
       const sig = await submitUntilFilled(t, FILL_ATTEMPTS, (attempt) =>

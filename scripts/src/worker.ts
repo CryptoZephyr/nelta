@@ -3,10 +3,10 @@
  * the owner's wSOL account. All state is read from chain on every oracle tick, so a restart
  * resumes without local state. Usage: tsx src/worker.ts [--once]
  * Env: RPC_URL, NELTA_KEEPER_KEYPAIR (path or JSON byte array), NELTA_MAX_ATTEMPTS (per rule nonce, default 200),
- * NELTA_POLL_MS (oracle poll fallback, default 5000).
+ * NELTA_POLL_MS (oracle poll fallback, default 5000), NELTA_HEARTBEAT_MS (on-chain heartbeat, default 600000).
  */
 import { BN } from "@anchor-lang/core";
-import { Connection, PublicKey, sendAndConfirmTransaction, SendTransactionError } from "@solana/web3.js";
+import { Connection, PublicKey, sendAndConfirmTransaction, SendTransactionError, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { loadKeypair } from "@velocity-exchange/sdk";
 import { NeltaClient, PositionAccount, SOL_ORACLE, withBudget } from "./client";
 
@@ -14,6 +14,8 @@ const RPC = process.env.RPC_URL ?? "https://api.devnet.solana.com";
 const MAX_ATTEMPTS = Number(process.env.NELTA_MAX_ATTEMPTS ?? 200);
 const MAX_ORACLE_AGE_SECS = 30;
 const POLL_MS = Number(process.env.NELTA_POLL_MS ?? 5_000);
+const HEARTBEAT_MS = Number(process.env.NELTA_HEARTBEAT_MS ?? 10 * 60_000);
+const MEMO = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const TERMINAL = /RuleInactive|StaleNonce|RuleExpired|InvalidRecipient|InvalidTokenAccount|InvalidVenueAccount|UnexpectedLong|UnexpectedBorrow/;
 
 const conn = new Connection(RPC, "confirmed");
@@ -70,6 +72,13 @@ async function execute(pos: PositionAccount, o: OraclePrice): Promise<void> {
   }
 }
 
+/** A signed memo from the keeper key lets anyone (the app included) see the keeper is live using only an RPC. */
+async function heartbeat(): Promise<void> {
+  const ix = new TransactionInstruction({ programId: MEMO, keys: [{ pubkey: keeper.publicKey, isSigner: true, isWritable: false }], data: Buffer.from("nelta-keeper:alive") });
+  await sendAndConfirmTransaction(conn, new Transaction().add(ix), [keeper], { commitment: "confirmed" })
+    .catch((e) => log(`heartbeat failed: ${String((e as Error).message ?? e).slice(0, 120)}`));
+}
+
 let busy = false;
 let lastSeen: Buffer | undefined;
 async function tick(data: Buffer): Promise<void> {
@@ -96,6 +105,8 @@ async function main() {
     if (info) await tick(info.data);
     return;
   }
+  void heartbeat();
+  setInterval(() => void heartbeat(), HEARTBEAT_MS);
   conn.onAccountChange(SOL_ORACLE, (info) => void tick(info.data), { commitment: "processed" });
   // Websocket subscriptions can drop silently on long unattended runs; polling keeps the keeper live.
   setInterval(() => {
