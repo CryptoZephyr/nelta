@@ -6,8 +6,9 @@ import { Icon } from "./icons";
 import { color, font, radius, space } from "./theme";
 import { T } from "./ui";
 
-const RELEASES = "https://github.com/CryptoZephyr/nelta/releases/latest";
-const APK = `${RELEASES}/download/nelta.apk`;
+const REPO = "https://github.com/CryptoZephyr/nelta/releases";
+const RELEASES = `${REPO}/latest`;
+const apk = (tag: string) => `${REPO}/download/${tag}/nelta.apk`;
 
 const parts = (v: string) => v.replace(/^v/, "").split(".").map((n) => Number.parseInt(n, 10) || 0);
 
@@ -29,7 +30,7 @@ function useUpdate(): { version: string; url: string } | null {
     fetch(RELEASES, { method: "HEAD" })
       .then((r) => {
         const tag = /\/tag\/(v?[\d.]+)$/.exec(r.url)?.[1];
-        if (live && tag && isNewer(tag, current)) setUpdate({ version: tag.replace(/^v/, ""), url: APK });
+        if (live && tag && isNewer(tag, current)) setUpdate({ version: tag.replace(/^v/, ""), url: apk(tag) });
       })
       .catch(() => undefined);
     return () => {
