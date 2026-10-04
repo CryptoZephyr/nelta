@@ -152,7 +152,8 @@ pub fn read_oracle_price(oracle: &AccountInfo) -> Result<(u64, i64)> {
     let price = i64_at(&d, 8)?;
     let publish_us = u64_at(&d, 16)?;
     let exponent = i32::from_le_bytes(d.get(32..36).ok_or(NeltaError::InvalidAccountData)?.try_into().unwrap());
-    Ok((to_price_precision(price, exponent)?, (publish_us / 1_000_000) as i64))
+    let publish_ts = i64::try_from(publish_us / 1_000_000).map_err(|_| error!(NeltaError::Overflow))?;
+    Ok((to_price_precision(price, exponent)?, publish_ts))
 }
 
 #[cfg(test)]

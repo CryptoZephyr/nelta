@@ -2,6 +2,17 @@ use crate::NeltaError;
 use anchor_lang::prelude::*;
 
 pub const BPS: u16 = 10_000;
+pub const MAX_ORACLE_AGE_SECS: i64 = 30;
+/// Tolerated validator-vs-publisher clock skew for a publish time slightly ahead of `now`.
+pub const MAX_ORACLE_SKEW_SECS: i64 = 5;
+
+/// Two-sided freshness: not too far in the future and not older than MAX_ORACLE_AGE_SECS.
+pub fn oracle_fresh(now: i64, publish_ts: i64) -> bool {
+    match now.checked_sub(publish_ts) {
+        Some(age) => (-MAX_ORACLE_SKEW_SECS..=MAX_ORACLE_AGE_SECS).contains(&age),
+        None => false,
+    }
+}
 
 /// target_short = floor((held * ratio) / (10_000 * step)) * step, all in base units (1e9 = 1 SOL).
 pub fn target_short(held: u64, ratio_bps: u16, step: u64) -> Result<u64> {
@@ -50,6 +61,19 @@ mod tests {
         assert_eq!(target_short(u64::MAX, 10_000, 1).unwrap(), u64::MAX);
         assert!(target_short(SOL, 10_001, STEP).is_err());
         assert!(target_short(SOL, 5_000, 0).is_err());
+    }
+
+    #[test]
+    fn oracle_freshness_is_two_sided() {
+        let now = 1_800_000_000;
+        assert!(oracle_fresh(now, now));
+        assert!(oracle_fresh(now, now - MAX_ORACLE_AGE_SECS));
+        assert!(!oracle_fresh(now, now - MAX_ORACLE_AGE_SECS - 1));
+        assert!(oracle_fresh(now, now + MAX_ORACLE_SKEW_SECS));
+        assert!(!oracle_fresh(now, now + MAX_ORACLE_SKEW_SECS + 1));
+        assert!(!oracle_fresh(now, now + 3_600));
+        assert!(!oracle_fresh(now, 0));
+        assert!(!oracle_fresh(i64::MIN, i64::MAX));
     }
 
     #[test]
