@@ -39,12 +39,25 @@ export class NoFill extends Error {}
 /** Polls rather than subscribes: websocket subscriptions are unreliable on mobile networks. */
 async function nextOracleUpdate(timeoutMs = 6_000): Promise<void> {
   const read = async () => (await connection.getAccountInfo(SOL_ORACLE, "processed").catch(() => null))?.data;
-  const start = await read();
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 1_000));
-    const now = await read();
-    if (start && now && !now.equals(start)) return;
+  let sub: number | undefined;
+  let done = false;
+  const pushed = new Promise<void>((resolve) => {
+    sub = connection.onAccountChange(SOL_ORACLE, () => resolve(), { commitment: "processed" });
+  });
+  const polled = (async () => {
+    const start = await read();
+    const deadline = Date.now() + timeoutMs;
+    while (!done && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 300));
+      const now = await read();
+      if (start && now && !now.equals(start)) return;
+    }
+  })();
+  try {
+    await Promise.race([pushed, polled]);
+  } finally {
+    done = true;
+    if (sub !== undefined) void connection.removeAccountChangeListener(sub).catch(() => undefined);
   }
 }
 

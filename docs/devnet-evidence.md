@@ -67,3 +67,34 @@ Owner `EmHzvQyjdmnJRcR3yPNzXAJQFydKwzu4JoH1CbvtGruc`, funded with 0.2 SOL and 25
 
 Unfilled attempts landed as reverted transactions (`PlaceAndTakeOrderSuccessConditionFailed`, Velocity log
 "AMM has too much inventory") and changed nothing; Sync hedge needed two taps and Release needed two.
+
+## Redesigned app + hosted keeper (2026-10-04)
+
+Emulator + MWA fake wallet, owner `3wtCUZuLHDvZtnYvQ3yhwAYZq8HEC5xuoqPdzqs1yftw`, funded with 0.2 SOL and 60 dUSDT.
+Every step except the keeper run was signed in the redesigned app. No local keeper was running: the rule was
+executed by the GitHub Actions keeper (run 37160640617, keeper key `7kCrKbJ9hAjLFdY26HY5asutdJ4XYadZKajYbu1diqTx`).
+
+| Step | Signature | State after (as shown in the app) |
+| --- | --- | --- |
+| Create position, nonce accounts, deposit 60 dUSDT and 0.1001 SOL | `2wruEgY8UsSTf7P6MBBKZjHHw4wRcY2uz7DRXFgokxEWu1i8MBU8NzR5FqGVpgk56Pwp1Q9Ym3fDLYkHWwueXeZL`, `3V1YuejaAwafgu6ehK6ZCmDvnwgH8Wj2bw9TPsJmsvpi55GN2vUSHm6jjvs6FijQX9MA8PPSzoB7Z1pikebu11Hb`, `5YiE8H5wGEHRdvcwoUFBk9msss3SNVWwyvaPH7LVYHFYxF5f6FaGDAN7pKEghY7YLmnLXpevCFdZNjN3g1YhosGH`, `2z3GnYbQrRmREwvPSJHDLCRVB6qm9s5PSYEt5GXtbXpWMPWrXre5WKshcB65cr61fMzZDh2bbcRSR1xx9MsBwM9V`, `iDCis3JigpxXi98Vn7cYTnKhJj6HPR4hiyjL5q5qxgyxHaLqzoNDi8e3aorzSPE5eGL5ZfaQsMMr5pa4cgTdiBY` | SOL 0.1001, short 0, off by 0.05 |
+| Sync hedge (fifth tap; the first four ended "No fill this time, nothing changed") | `5gi9SLxKhwKSvRnuu4xWpLFkJ5yJpCiEFEs5fMtfeerrjETD1ogp2zwN3V42XQqT62smWx6qS67hBdyzNas7BVmq` | short 0.05, in sync |
+| Arm rule (SOL rises to $110, release 0.04, 24h), app force-stopped at 00:02:47Z | `GSsFFAc3WTou68BXjJUjQRGXmvjGh895c8jxDX338T5YhcXfmu52tpwKApjGHmJE4c6zfU2onVVq9oDyckFNVnc` | rule armed |
+| Hosted keeper executes at 00:03:38Z, app stopped | `668M2dDJNdjARRq8eZwAjDF9nPFN6Dns2EXLiy4cPVNDf9a6sQCvKxXsEcNWQmXYvUa3rnUjTWCKmnxudq6NR3jB` | after reopening: SOL 0.0601, short 0.03, +0.04 wSOL, rule not armed |
+| Release 0.04 SOL (first tap) | `3VS9rYbEnWd79RTfc5T7MvnAcTAAiReKkZ5YAmsxUSdNFtRMU2Hkx5tKKSFTizasWjZ7Ug4uyq2QXq5gdmVfv4Bm` | SOL 0.0201, short 0.01 |
+| Recovery 1: close hedge | `STpPj1neHJqzFEQ9dbNXgosqw4xBsJ256acKYi7R77TYi9UWEJ1vunPzsJrxyBkSd8aVipX6R7JBH62Hf91kZFW` | short 0 |
+| Recovery 2: withdraw all SOL | `4zQvBtevzUnxom3TFWyauNdDZAZkf6D9c2m81NBMoKG73RgEA9PEKzFDBoh6ccTH4L4TzumjNdtkD81RY9vN1Yjz` | SOL 0 |
+| Recovery 3: withdraw collateral | `33h6W4867mCj5kQioT4vRPEbGzCZeJF23rmRxbrn4YNPv3s32ndf19isPb92tF2ppTLzzaAG19NQqLfqMDyeRki` | 0.05 dUSDT left (fees/PnL dust) |
+
+62 unfilled attempts landed as reverted transactions and changed nothing.
+
+### Forbidden actions, rerun on the current program (all PASS)
+
+`e2e.ts negative`: release to a non-owner account, release signed by a non-owner, ratio above 100%, release more
+SOL than held, keeper with no armed rule, keeper before trigger, stale nonce, keeper redirecting funds to itself,
+revoked rule.
+
+`d10extra.ts`: arming an already-expired rule (`RuleExpired`), keeper after expiry (`RuleExpired`), fake oracle and
+different perp market (`ConstraintAddress`), replay of the previous nonce (`StaleNonce`), non-owner rebalance (extra
+short) and non-owner ratio change (`ConstraintSeeds`). Arm/revoke fixture:
+`5pzgR4jsjzuCwifSPGuUxxN4Jv4urrLnWaun6LbmZ3RQRxd5B3HhYmJVL3uAonWazjyV3UvkCnFGdwY1cpoGFqU5`,
+`2AuxjwTgC3gjAL9HSxhzNbsAFah44BQVhL4Nq8GmUYPq3Xwn42JRi2XaCE6wo95zZxGyQshjT8q2kpi7Nq2LPxsy`.
