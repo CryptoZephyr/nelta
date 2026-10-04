@@ -1,7 +1,7 @@
 import { transact, Web3MobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-web3js";
 import { PublicKey, Transaction } from "@solana/web3.js";
 
-const IDENTITY = { name: "Nelta", uri: "https://github.com/CryptoZephyr/nelta", icon: "favicon.ico" };
+const IDENTITY = { name: "Nelta", uri: "https://github.com/CryptoZephyr/nelta/", icon: "raw/main/app/assets/icon.png" };
 const CHAIN = "solana:devnet";
 let authToken: string | undefined;
 
