@@ -53,10 +53,11 @@ async function positions(): Promise<{ publicKey: PublicKey; account: PositionAcc
   return ns.position.all();
 }
 
-async function execute(pos: PositionAccount, o: OraclePrice): Promise<void> {
+/** Resolves true once the rule needs no retry on this oracle data (executed, terminal, or out of attempts). */
+async function execute(pos: PositionAccount, o: OraclePrice): Promise<boolean> {
   const key = `${pos.owner.toBase58()}:${pos.ruleNonce.toString()}`;
   const n = (attempts.get(key) ?? 0) + 1;
-  if (n > MAX_ATTEMPTS) return;
+  if (n > MAX_ATTEMPTS) return true;
   attempts.set(key, n);
   const nelta = new NeltaClient(conn, pos.owner, keeper);
   const ix = await nelta.executeRuleIx(keeper.publicKey, pos.ruleNonce);
@@ -66,16 +67,18 @@ async function execute(pos: PositionAccount, o: OraclePrice): Promise<void> {
     if (tx?.meta?.err) throw new Error(`confirmed with error ${JSON.stringify(tx.meta.err)}`);
     const after = await nelta.fetchPosition();
     log(`EXECUTED ${key} at ${o.price.toNumber() / 1e6} USD, attempt ${n}: ${sig}; rule active after = ${after?.rule.active}`);
+    return true;
   } catch (e) {
     const logs = e instanceof SendTransactionError ? (e.logs ?? []) : [];
     const reason = logs.filter((l) => /Error/.test(l)).slice(-1)[0] ?? String((e as Error).message ?? e).slice(0, 160);
     if (TERMINAL.test(reason)) {
       attempts.set(key, MAX_ATTEMPTS);
       log(`GAVE UP ${key}: ${reason}`);
-    } else {
-      log(`retry ${key} attempt ${n}/${MAX_ATTEMPTS}: ${reason}`);
-      if (n === MAX_ATTEMPTS) log(`ALERT ${key}: retry cap reached, rule left armed for the owner`);
+      return true;
     }
+    log(`retry ${key} attempt ${n}/${MAX_ATTEMPTS}: ${reason}`);
+    if (n === MAX_ATTEMPTS) log(`ALERT ${key}: retry cap reached, rule left armed for the owner`);
+    return n === MAX_ATTEMPTS;
   }
 }
 
@@ -88,15 +91,17 @@ async function heartbeat(): Promise<void> {
 
 let busy = false;
 let lastSeen: Buffer | undefined;
+/** lastSeen only advances once every due rule is settled, so a failed tick is retried on the next poll of the same data. */
 async function tick(data: Buffer): Promise<void> {
   if (busy || lastSeen?.equals(data)) return;
   busy = true;
-  lastSeen = Buffer.from(data);
   try {
     const o = parseOracle(data);
     const now = Math.floor(Date.now() / 1000);
     const due = (await positions()).filter(({ account }) => isDue(account, o, now));
-    for (const { account } of due) await execute(account, o);
+    let settled = true;
+    for (const { account } of due) settled = (await execute(account, o)) && settled;
+    if (settled) lastSeen = Buffer.from(data);
   } catch (e) {
     log(`tick error: ${String((e as Error).message ?? e).slice(0, 160)}`);
   } finally {
