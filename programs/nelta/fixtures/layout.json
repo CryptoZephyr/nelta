@@ -1,0 +1,20 @@
+{
+  "velocity": {
+    "user_spot_positions": 104,
+    "spot_position_size": 40,
+    "spot_market_index": 32,
+    "spot_balance_type": 34,
+    "user_perp_positions": 424,
+    "perp_position_size": 80,
+    "perp_base_asset_amount": 8,
+    "perp_market_index": 76,
+    "spot_cumulative_deposit_interest": 328,
+    "perp_order_step_size": 544,
+    "oracle_price": 8,
+    "oracle_publish_time": 16,
+    "oracle_exponent": 32
+  },
+  "position": {
+    "size": 77
+  }
+}
