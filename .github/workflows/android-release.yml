@@ -1,0 +1,70 @@
+name: android-release
+
+# Builds nelta.apk for a vX.Y.Z tag, signs it with the release key, and attaches it to that GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to rebuild
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Check app.json matches the tag
+        run: |
+          version=$(node -p "require('./app.json').expo.version")
+          code=$(node -p "require('./app.json').expo.android.versionCode")
+          [ "$TAG" = "v$version" ] || { echo "Tag $TAG does not match app.json version $version"; exit 1; }
+          [[ "$code" =~ ^[0-9]+$ ]] || { echo "app.json android.versionCode is missing"; exit 1; }
+      - run: npm ci
+      - run: npx expo prebuild --platform android --no-install
+      - name: Build and sign
+        env:
+          NELTA_RELEASE_KEYSTORE_BASE64: ${{ secrets.NELTA_RELEASE_KEYSTORE_BASE64 }}
+          NELTA_RELEASE_STORE_PASSWORD: ${{ secrets.NELTA_RELEASE_STORE_PASSWORD }}
+          NELTA_RELEASE_KEY_ALIAS: ${{ secrets.NELTA_RELEASE_KEY_ALIAS }}
+          NELTA_RELEASE_KEY_PASSWORD: ${{ secrets.NELTA_RELEASE_KEY_PASSWORD }}
+          NELTA_RELEASE_CERT_SHA256: ${{ vars.NELTA_RELEASE_CERT_SHA256 }}
+        run: |
+          [ -n "$NELTA_RELEASE_KEYSTORE_BASE64" ] || { echo "Release key secrets are not set (see app/RELEASING.md)"; exit 1; }
+          export NELTA_RELEASE_STORE_FILE="$RUNNER_TEMP/release.jks"
+          base64 -d <<<"$NELTA_RELEASE_KEYSTORE_BASE64" > "$NELTA_RELEASE_STORE_FILE"
+          (cd android && ./gradlew assembleRelease --no-daemon)
+          scripts/sign-release.sh android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/nelta.apk"
+          rm -f "$NELTA_RELEASE_STORE_FILE"
+      - name: Attach nelta.apk to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+          gh release upload "$TAG" "$RUNNER_TEMP/nelta.apk" --repo "$GITHUB_REPOSITORY" --clobber
