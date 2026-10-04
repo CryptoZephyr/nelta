@@ -322,9 +322,14 @@ export class Nelta {
     return ixs;
   }
 
-  durableTx(ixs: TransactionInstruction[], noncePubkey: PublicKey, nonce: string): Transaction {
+  /**
+   * Also advances every sibling nonce, so once any signed try lands successfully, every other try signed
+   * against the same nonces (including ones from an earlier, interrupted session) can never land.
+   */
+  durableTx(ixs: TransactionInstruction[], noncePubkey: PublicKey, nonce: string, siblings: PublicKey[] = []): Transaction {
     const t = new Transaction().add(
       SystemProgram.nonceAdvance({ noncePubkey, authorizedPubkey: this.owner }),
+      ...siblings.filter((s) => !s.equals(noncePubkey)).map((s) => SystemProgram.nonceAdvance({ noncePubkey: s, authorizedPubkey: this.owner })),
       ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
       ...ixs,
     );

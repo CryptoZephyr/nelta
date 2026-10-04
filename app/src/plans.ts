@@ -51,6 +51,21 @@ export const syncHedge = (snap: Snapshot): Plan => ({
   ixs: (n) => n.rebalanceIxs(),
 });
 
+export const changeRatio = (snap: Snapshot, ratioBps: number): Plan => {
+  const to = targetShort(snap.solLamports, ratioBps, snap.step);
+  return {
+    title: `Hedge ${ratioBps / 100}% of your SOL`,
+    summary: "Changes the hedge ratio and moves the short to match, in one transaction.",
+    changes: [
+      { label: "Hedge ratio", from: `${(snap.position?.ratioBps ?? 0) / 100}%`, to: `${ratioBps / 100}%` },
+      { label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: `${sol(to)} SOL` },
+    ],
+    notes: [ATOMIC],
+    fill: to !== snap.shortBase,
+    ixs: async (n) => [...(await n.setRatioIxs(ratioBps)), ...(await n.rebalanceIxs())],
+  };
+};
+
 export const release = (snap: Snapshot, lamports: bigint): Plan => {
   const o = releaseOutcome(snap, snap.position!.ratioBps, lamports);
   return {
