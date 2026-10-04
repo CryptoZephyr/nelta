@@ -13,7 +13,6 @@ use velocity as v;
 declare_id!("9Rk99npYk6kwtEx7MVuq2SWyr1WQQ7f9S9i8mXY4iJ4R");
 
 pub const POSITION_SEED: &[u8] = b"position";
-pub const MAX_ORACLE_AGE_SECS: i64 = 30;
 
 #[program]
 pub mod nelta {
@@ -189,7 +188,7 @@ pub mod nelta {
         require_eq!(nonce, ctx.accounts.core.position.rule_nonce, NeltaError::StaleNonce);
         require!(now <= rule.expiry_ts, NeltaError::RuleExpired);
         let (price, publish_ts) = v::read_oracle_price(&ctx.accounts.oracle)?;
-        require!(now - publish_ts <= MAX_ORACLE_AGE_SECS, NeltaError::StaleOracle);
+        require!(oracle_fresh(now, publish_ts), NeltaError::StaleOracle);
         require!(rule_triggered(&rule, price), NeltaError::NotTriggered);
         ctx.accounts.core.position.rule.active = false;
 

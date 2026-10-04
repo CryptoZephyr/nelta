@@ -29,6 +29,7 @@ export const PRICE_PRECISION = 1_000_000;
 const NONCE_SEED = "nelta-nonce";
 const BPS = 10_000;
 const MAX_ORACLE_AGE_SECS = 30;
+export const MAX_ORACLE_SKEW_SECS = 5;
 
 // Velocity account layouts, mirrored from programs/nelta/src/velocity.rs.
 const USER_SPOT_POSITIONS = 8 + 32 + 32 + 32;
@@ -52,6 +53,7 @@ export interface Snapshot {
   targetShort: bigint;
   step: bigint;
   price: number;
+  /** now - publishTs; negative when the feed is stamped in the future. */
   oracleAgeSecs: number;
   walletLamports: number;
   walletDusdt: number;
@@ -174,7 +176,7 @@ export class Nelta {
       targetShort: position ? targetShort(solLamports, position.ratioBps, step) : 0n,
       step,
       price: Number(o.price) / PRICE_PRECISION,
-      oracleAgeSecs: Math.max(0, Math.floor(Date.now() / 1000) - o.publishTs),
+      oracleAgeSecs: Math.floor(Date.now() / 1000) - o.publishTs,
       walletLamports,
       walletDusdt: walletDusdt / 1e6,
       collateralBase,
@@ -182,7 +184,7 @@ export class Nelta {
     };
   }
 
-  oracleFresh = (s: Snapshot) => s.oracleAgeSecs <= MAX_ORACLE_AGE_SECS;
+  oracleFresh = (s: Snapshot) => s.oracleAgeSecs >= -MAX_ORACLE_SKEW_SECS && s.oracleAgeSecs <= MAX_ORACLE_AGE_SECS;
 
   async createPositionIxs(ratioBps: number): Promise<TransactionInstruction[]> {
     const init = await this.program.methods

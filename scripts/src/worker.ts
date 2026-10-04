@@ -13,6 +13,7 @@ import { NeltaClient, PositionAccount, SOL_ORACLE, withBudget } from "./client";
 const RPC = process.env.RPC_URL ?? "https://api.devnet.solana.com";
 const MAX_ATTEMPTS = Number(process.env.NELTA_MAX_ATTEMPTS ?? 200);
 const MAX_ORACLE_AGE_SECS = 30;
+const MAX_ORACLE_SKEW_SECS = 5;
 const POLL_MS = Number(process.env.NELTA_POLL_MS ?? 5_000);
 const HEARTBEAT_MS = Number(process.env.NELTA_HEARTBEAT_MS ?? 10 * 60_000);
 const MEMO = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
@@ -35,9 +36,15 @@ export function parseOracle(data: Buffer): OraclePrice {
   return { price, publishTs };
 }
 
+/** Mirrors the program's two-sided oracle_fresh check. */
+export function oracleFresh(publishTs: number, now: number): boolean {
+  const age = now - publishTs;
+  return age >= -MAX_ORACLE_SKEW_SECS && age <= MAX_ORACLE_AGE_SECS;
+}
+
 export function isDue(pos: PositionAccount, o: OraclePrice, now: number): boolean {
   const r = pos.rule;
-  if (!r.active || now > r.expiryTs.toNumber() || now - o.publishTs > MAX_ORACLE_AGE_SECS) return false;
+  if (!r.active || now > r.expiryTs.toNumber() || !oracleFresh(o.publishTs, now)) return false;
   return r.above ? o.price.gte(r.triggerPrice) : o.price.lte(r.triggerPrice);
 }
 

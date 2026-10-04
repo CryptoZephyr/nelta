@@ -6,7 +6,7 @@ import { Header } from "../../header";
 import { Icon } from "../../icons";
 import { KeeperStatus, keeperStatus } from "../../keeper";
 import * as plans from "../../plans";
-import { Snapshot } from "../../nelta";
+import { MAX_ORACLE_SKEW_SECS, Snapshot } from "../../nelta";
 import { useNow } from "../../now";
 import { connection, useNelta } from "../../store";
 import { color, space, tone } from "../../theme";
@@ -126,11 +126,14 @@ export default function Home() {
       {!readError && snap.oracleAgeSecs > STALE_PRICE_SECS && (
         <Notice tone="drift" icon="clock" title="Needs attention" body={`Velocity’s price feed hasn’t updated for ${age(snap.oracleAgeSecs)}. Hedge changes and rules wait until it’s fresh. Your SOL is safe and nothing will move.`} />
       )}
+      {!readError && snap.oracleAgeSecs < -MAX_ORACLE_SKEW_SECS && (
+        <Notice tone="drift" icon="clock" title="Needs attention" body="Velocity’s price feed shows a time in the future, so it can’t be trusted yet. Hedge changes and rules wait until it’s fresh. Your SOL is safe and nothing will move." />
+      )}
 
       <T v="label" style={{ marginTop: space.md }}>SOL in custody</T>
       <T v="hero">{sol(snap.solLamports)} SOL</T>
       <T v="caption">
-        ≈ {usd(solValue)} at {usd(snap.price)} · price {age(snap.oracleAgeSecs)} old
+        ≈ {usd(solValue)} at {usd(snap.price)} · price {age(Math.max(0, snap.oracleAgeSecs))} old
       </T>
 
       <Card>
