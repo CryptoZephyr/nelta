@@ -7,7 +7,7 @@ import * as plans from "../../plans";
 import { useNelta } from "../../store";
 import { useNow } from "../../now";
 import { color, space, tone } from "../../theme";
-import { Button, Card, Field, Notice, Pill, Row, Screen, Segmented, T } from "../../ui";
+import { Button, Card, Field, Notice, Pill, Row, Screen, Segmented, StalePriceNotice, T } from "../../ui";
 
 const EXPIRY = [
   { value: 6, label: "6 h" },
@@ -17,7 +17,7 @@ const EXPIRY = [
 ];
 
 export default function Rule() {
-  const { snap, propose } = useNelta();
+  const { nelta, snap, propose } = useNelta();
   const [above, setAbove] = useState(true);
   const [trigger, setTrigger] = useState("");
   const [amount, setAmount] = useState("0.04");
@@ -66,13 +66,15 @@ export default function Rule() {
   const triggerError = !trigger ? null : !(triggerUsd > 0) ? "Enter a price above $0." : null;
   const runsNow = triggerUsd > 0 && (above ? snap.price >= triggerUsd : snap.price <= triggerUsd);
   const ready = triggerUsd > 0 && releaseSol > 0 && !amountError && !triggerError;
+  const fresh = !!nelta?.oracleFresh(snap);
   const outcome = ready ? plans.releaseOutcome(snap, pos.ratioBps, lamports) : null;
 
   return (
-    <Screen footer={<Button label="Review rule" icon="zap" disabled={!ready} onPress={() => propose(plans.armRule(snap, triggerUsd, above, releaseSol, hours))} />}>
+    <Screen footer={<Button label="Review rule" icon="zap" disabled={!ready || !fresh} onPress={() => propose(plans.armRule(snap, triggerUsd, above, releaseSol, hours))} />}>
       <Header />
       <T v="h1">Write a rule</T>
       <T v="body" style={{ color: color.textMuted }}>One rule at a time. It runs once, then turns itself off.</T>
+      {!fresh && <StalePriceNotice ageSecs={snap.oracleAgeSecs} />}
       <Card>
         <T v="label">If SOL</T>
         <Segmented options={[{ value: true, label: "rises to" }, { value: false, label: "falls to" }]} value={above} onChange={setAbove} />
