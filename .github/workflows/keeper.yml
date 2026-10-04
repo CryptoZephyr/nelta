@@ -37,4 +37,19 @@ jobs:
         env:
           NELTA_KEEPER_KEYPAIR: ${{ secrets.NELTA_KEEPER_KEYPAIR }}
           RPC_URL: ${{ secrets.RPC_URL }}
-        run: timeout 350m npm run worker || [ $? -eq 124 ]
+        # Restart the worker if it crashes, but stop at the same 350m deadline so the queued run takes over.
+        # Exit 78 is a config error (e.g. RPC_URL missing) that a restart cannot fix, so fail the job instead.
+        run: |
+          deadline=$((SECONDS + 350 * 60))
+          backoff=5
+          while left=$((deadline - SECONDS)); [ "$left" -gt 0 ]; do
+            started=$SECONDS
+            code=0
+            timeout "$left" npm run worker || code=$?
+            [ "$code" -eq 124 ] && exit 0
+            [ "$code" -eq 78 ] && { echo "::error::keeper config error, not restarting"; exit 78; }
+            if [ $((SECONDS - started)) -ge 300 ]; then backoff=5; fi
+            echo "::warning::keeper exited with code $code; restarting in ${backoff}s"
+            sleep "$backoff"
+            backoff=$((backoff * 2 > 120 ? 120 : backoff * 2))
+          done
