@@ -33,6 +33,7 @@ npx tsx src/e2e.ts init      # position PDA + Velocity user owned by it
 npx tsx src/e2e.ts fund      # 60 dUSDT collateral + 0.1001 SOL
 npx tsx src/e2e.ts hedge     # 50% short, sent on each oracle update until FullFill succeeds
 npx tsx src/e2e.ts negative  # simulated attacks/edge cases that must fail
+npx tsx src/d10extra.ts     # more forbidden actions: expiry, fake oracle/market, replay, non-owner
 npx tsx src/e2e.ts rule      # keeper executes a one-use rule: reduce + release 0.04 SOL
 npx tsx src/e2e.ts replay    # executed rule cannot run again
 npx tsx src/e2e.ts recover   # owner closes the hedge and withdraws everything
