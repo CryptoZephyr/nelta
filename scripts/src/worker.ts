@@ -12,10 +12,12 @@ import { loadKeypair } from "@velocity-exchange/sdk";
 import { NeltaClient, PositionAccount, SOL_ORACLE, withBudget } from "./client";
 
 const PUBLIC_RPC = /(^|\/\/)api\.(devnet|testnet|mainnet-beta)\.solana\.com/;
+/** EX_CONFIG: a restart cannot fix it, so the keeper workflow's restart loop fails the job instead of retrying. */
+const EXIT_CONFIG = 78;
 const RPC = process.env.RPC_URL?.trim() ?? "";
 if (!RPC) {
   console.error("RPC_URL is not set. The keeper needs a private Devnet RPC; the public endpoint rate-limits it and armed rules can be missed.");
-  process.exit(1);
+  process.exit(EXIT_CONFIG);
 }
 if (PUBLIC_RPC.test(RPC)) console.warn("WARNING: RPC_URL is a public Solana endpoint. It rate-limits the keeper, so armed rules can be missed. Use a private RPC.");
 const MAX_ATTEMPTS = Number(process.env.NELTA_MAX_ATTEMPTS ?? 200);
@@ -151,4 +153,15 @@ async function main() {
   }, 10 * 60_000);
 }
 
-if (require.main === module) void main();
+if (require.main === module) {
+  // A stray rejection must not stop the watch loop; a thrown exception leaves state unknown, so exit and let the runner restart us.
+  process.on("unhandledRejection", (e) => log(`unhandled rejection: ${String((e as Error)?.stack ?? e).slice(0, 400)}`));
+  process.on("uncaughtException", (e) => {
+    log(`FATAL uncaught exception: ${String(e?.stack ?? e).slice(0, 400)}`);
+    process.exit(1);
+  });
+  main().catch((e) => {
+    log(`FATAL startup: ${String((e as Error)?.stack ?? e).slice(0, 400)}`);
+    process.exit(1);
+  });
+}
