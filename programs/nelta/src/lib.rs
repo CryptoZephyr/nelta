@@ -151,7 +151,7 @@ pub mod nelta {
 
     /// Owner-signed: release SOL to the owner and shrink the short in the same instruction.
     pub fn release<'info>(ctx: Context<'info, Release<'info>>, lamports: u64) -> Result<()> {
-        require_keys_eq!(ctx.accounts.core.position.owner, ctx.accounts.owner.key(), NeltaError::InvalidRecipient);
+        check_release_signer(&ctx.accounts.core.position, &ctx.accounts.owner.key())?;
         release_paired(&ctx.accounts.core, ctx.remaining_accounts, lamports)
     }
 
@@ -184,12 +184,9 @@ pub mod nelta {
     pub fn execute_rule<'info>(ctx: Context<'info, ExecuteRule<'info>>, nonce: u64) -> Result<()> {
         let now = Clock::get()?.unix_timestamp;
         let rule = ctx.accounts.core.position.rule;
-        require!(rule.active, NeltaError::RuleInactive);
-        require_eq!(nonce, ctx.accounts.core.position.rule_nonce, NeltaError::StaleNonce);
-        require!(now <= rule.expiry_ts, NeltaError::RuleExpired);
+        check_rule_armed(&ctx.accounts.core.position, nonce, now)?;
         let (price, publish_ts) = v::read_oracle_price(&ctx.accounts.oracle)?;
-        require!(oracle_fresh(now, publish_ts), NeltaError::StaleOracle);
-        require!(rule_triggered(&rule, price), NeltaError::NotTriggered);
+        check_rule_price(&rule, now, price, publish_ts)?;
         ctx.accounts.core.position.rule.active = false;
 
         let a = &ctx.accounts.core;
@@ -226,13 +223,11 @@ fn release_paired<'info>(a: &ReleaseCore<'info>, remaining: &'info [AccountInfo<
     require!(lamports > 0, NeltaError::ZeroAmount);
     let step = v::read_order_step(&a.perp_market)?;
     let held = v::read_sol_lamports(&a.venue.velocity_user, &a.sol_spot_market)?;
-    require!(lamports <= held, NeltaError::InsufficientSol);
-    let remaining_sol = held - lamports;
-    let target = target_short(remaining_sol, a.position.ratio_bps, step)?;
     let current = v::read_short(&a.venue.velocity_user)?;
-    if current > target {
-        place_and_take(&a.venue, &a.position, remaining, v::LONG, current - target, true, true)?;
-        require_eq!(v::read_short(&a.venue.velocity_user)?, target, NeltaError::PostcheckShort);
+    let plan = plan_release(held, current, lamports, a.position.ratio_bps, step)?;
+    if plan.buy_back > 0 {
+        place_and_take(&a.venue, &a.position, remaining, v::LONG, plan.buy_back, true, true)?;
+        require_eq!(v::read_short(&a.venue.velocity_user)?, plan.short_after, NeltaError::PostcheckShort);
     }
     let before = token_amount(&a.vault_token)?;
     venue_withdraw(
@@ -240,16 +235,15 @@ fn release_paired<'info>(a: &ReleaseCore<'info>, remaining: &'info [AccountInfo<
         remaining, v::SOL_MARKET, lamports,
     )?;
     let received = token_amount(&a.vault_token)?.checked_sub(before).ok_or(NeltaError::Overflow)?;
-    require!(received.saturating_add(1) >= lamports, NeltaError::PostcheckSol);
+    check_received(received, lamports)?;
     invoke_signed(
         &token_transfer_ix(a.vault_token.key, a.owner_token.key, &a.position.key(), received),
         &[a.vault_token.to_account_info(), a.owner_token.to_account_info(), a.position.to_account_info()],
         &[&a.position.seeds()],
     )?;
     let held_after = v::read_sol_lamports(&a.venue.velocity_user, &a.sol_spot_market)?;
-    require!(held_after.saturating_add(lamports) <= held.saturating_add(1), NeltaError::PostcheckSol);
     let short_after = v::read_short(&a.venue.velocity_user)?;
-    require_eq!(short_after, current.min(target), NeltaError::PostcheckShort);
+    check_release_after(held, held_after, lamports, short_after, &plan)?;
     emit!(Released { owner: a.position.owner, lamports, sol_after: held_after, short_after });
     Ok(())
 }
@@ -363,6 +357,51 @@ fn token_amount(ai: &AccountInfo) -> Result<u64> {
 
 fn rule_triggered(rule: &Rule, price: u64) -> bool {
     if rule.above { price >= rule.trigger_price } else { price <= rule.trigger_price }
+}
+
+fn check_release_signer(position: &Position, signer: &Pubkey) -> Result<()> {
+    require_keys_eq!(position.owner, *signer, NeltaError::InvalidRecipient);
+    Ok(())
+}
+
+/// Rule checks that do not need the oracle: armed, current nonce, not expired.
+fn check_rule_armed(position: &Position, nonce: u64, now: i64) -> Result<()> {
+    require!(position.rule.active, NeltaError::RuleInactive);
+    require_eq!(nonce, position.rule_nonce, NeltaError::StaleNonce);
+    require!(now <= position.rule.expiry_ts, NeltaError::RuleExpired);
+    Ok(())
+}
+
+fn check_rule_price(rule: &Rule, now: i64, price: u64, publish_ts: i64) -> Result<()> {
+    require!(oracle_fresh(now, publish_ts), NeltaError::StaleOracle);
+    require!(rule_triggered(rule, price), NeltaError::NotTriggered);
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ReleasePlan {
+    /// Reduce-only base to buy back before withdrawing; never grows the short.
+    buy_back: u64,
+    short_after: u64,
+}
+
+fn plan_release(held: u64, current_short: u64, lamports: u64, ratio_bps: u16, step: u64) -> Result<ReleasePlan> {
+    require!(lamports > 0, NeltaError::ZeroAmount);
+    require!(lamports <= held, NeltaError::InsufficientSol);
+    let target = target_short(held - lamports, ratio_bps, step)?;
+    Ok(ReleasePlan { buy_back: current_short.saturating_sub(target), short_after: current_short.min(target) })
+}
+
+/// The venue may round the withdrawal down by at most one lamport.
+fn check_received(received: u64, lamports: u64) -> Result<()> {
+    require!(received.saturating_add(1) >= lamports, NeltaError::PostcheckSol);
+    Ok(())
+}
+
+fn check_release_after(held: u64, held_after: u64, lamports: u64, short_after: u64, plan: &ReleasePlan) -> Result<()> {
+    require!(held_after.saturating_add(lamports) <= held.saturating_add(1), NeltaError::PostcheckSol);
+    require_eq!(short_after, plan.short_after, NeltaError::PostcheckShort);
+    Ok(())
 }
 
 #[account]
@@ -602,4 +641,142 @@ pub enum NeltaError {
     InvalidAccountData,
     #[msg("Arithmetic overflow")]
     Overflow,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const SOL: u64 = 1_000_000_000;
+    const STEP: u64 = 100_000;
+    const NOW: i64 = 1_800_000_000;
+
+    fn code(r: Result<impl std::fmt::Debug>) -> u32 {
+        match r.unwrap_err() {
+            Error::AnchorError(a) => a.error_code_number,
+            Error::ProgramError(p) => panic!("unexpected program error {p:?}"),
+        }
+    }
+
+    fn err(e: NeltaError) -> u32 {
+        anchor_lang::error::ERROR_CODE_OFFSET + e as u32
+    }
+
+    fn armed(above: bool, trigger_price: u64) -> Position {
+        Position {
+            owner: Pubkey::new_unique(),
+            bump: 255,
+            ratio_bps: 5_000,
+            rule_nonce: 3,
+            rule: Rule { active: true, above, trigger_price, release_lamports: SOL / 20, expiry_ts: NOW + 60 },
+        }
+    }
+
+    #[test]
+    fn position_size_matches_shared_layout() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/layout.json");
+        let layout: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(layout["position"]["size"], 8 + Position::INIT_SPACE);
+        let fixture = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/position.bin")).unwrap();
+        assert_eq!(fixture.len(), 8 + Position::INIT_SPACE);
+    }
+
+    #[test]
+    fn only_the_owner_can_release() {
+        let p = armed(true, 1);
+        assert!(check_release_signer(&p, &p.owner).is_ok());
+        assert_eq!(code(check_release_signer(&p, &Pubkey::new_unique())), err(NeltaError::InvalidRecipient));
+    }
+
+    #[test]
+    fn release_never_exceeds_held_sol() {
+        assert_eq!(code(plan_release(SOL, 0, 0, 5_000, STEP)), err(NeltaError::ZeroAmount));
+        assert_eq!(code(plan_release(SOL, 0, SOL + 1, 5_000, STEP)), err(NeltaError::InsufficientSol));
+        assert!(plan_release(SOL, SOL / 2, SOL, 5_000, STEP).is_ok());
+    }
+
+    #[test]
+    fn release_only_shrinks_the_short_to_target() {
+        // 0.1 SOL held, 0.05 short at 50%: releasing 0.04 leaves 0.06 SOL, target 0.03.
+        let plan = plan_release(SOL / 10, SOL / 20, SOL * 4 / 100, 5_000, STEP).unwrap();
+        assert_eq!(plan, ReleasePlan { buy_back: SOL / 50, short_after: SOL * 3 / 100 });
+        // Already under target: no buy-back and the short is left as is, never increased.
+        let plan = plan_release(SOL / 10, SOL / 100, SOL / 100, 5_000, STEP).unwrap();
+        assert_eq!(plan, ReleasePlan { buy_back: 0, short_after: SOL / 100 });
+        // Full release closes the short.
+        let plan = plan_release(SOL / 10, SOL / 20, SOL / 10, 5_000, STEP).unwrap();
+        assert_eq!(plan, ReleasePlan { buy_back: SOL / 20, short_after: 0 });
+        for held in [SOL / 10, SOL, 7 * SOL + 123_456] {
+            for current in [0, STEP, held / 2, held] {
+                for lamports in [1, held / 3, held] {
+                    let p = plan_release(held, current, lamports, 5_000, STEP).unwrap();
+                    assert!(p.short_after <= current);
+                    assert_eq!(p.buy_back, current - p.short_after);
+                    assert_eq!(p.short_after % STEP, if p.short_after == current { current % STEP } else { 0 });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn release_postchecks() {
+        assert!(check_received(SOL, SOL).is_ok());
+        assert!(check_received(SOL - 1, SOL).is_ok());
+        assert_eq!(code(check_received(SOL - 2, SOL)), err(NeltaError::PostcheckSol));
+
+        let plan = plan_release(SOL, SOL / 2, SOL / 2, 5_000, STEP).unwrap();
+        assert!(check_release_after(SOL, SOL / 2, SOL / 2, plan.short_after, &plan).is_ok());
+        assert!(check_release_after(SOL, SOL / 2 + 1, SOL / 2, plan.short_after, &plan).is_ok());
+        assert_eq!(code(check_release_after(SOL, SOL / 2 + 2, SOL / 2, plan.short_after, &plan)), err(NeltaError::PostcheckSol));
+        assert_eq!(code(check_release_after(SOL, SOL / 2, SOL / 2, plan.short_after + STEP, &plan)), err(NeltaError::PostcheckShort));
+        assert_eq!(code(check_release_after(SOL, SOL / 2, SOL / 2, plan.short_after - STEP, &plan)), err(NeltaError::PostcheckShort));
+    }
+
+    #[test]
+    fn rule_must_be_armed_current_and_unexpired() {
+        let p = armed(true, 150_000_000);
+        assert!(check_rule_armed(&p, 3, NOW).is_ok());
+        assert!(check_rule_armed(&p, 3, p.rule.expiry_ts).is_ok());
+        assert_eq!(code(check_rule_armed(&p, 2, NOW)), err(NeltaError::StaleNonce));
+        assert_eq!(code(check_rule_armed(&p, 4, NOW)), err(NeltaError::StaleNonce));
+        assert_eq!(code(check_rule_armed(&p, 3, p.rule.expiry_ts + 1)), err(NeltaError::RuleExpired));
+        let mut used = p;
+        used.rule.active = false;
+        assert_eq!(code(check_rule_armed(&used, 3, NOW)), err(NeltaError::RuleInactive));
+    }
+
+    #[test]
+    fn rule_needs_fresh_oracle_and_trigger() {
+        let above = armed(true, 150_000_000).rule;
+        assert!(check_rule_price(&above, NOW, 150_000_000, NOW - MAX_ORACLE_AGE_SECS).is_ok());
+        assert_eq!(code(check_rule_price(&above, NOW, 150_000_000, NOW - MAX_ORACLE_AGE_SECS - 1)), err(NeltaError::StaleOracle));
+        assert!(check_rule_price(&above, NOW, 150_000_000, NOW + MAX_ORACLE_SKEW_SECS).is_ok());
+        assert_eq!(code(check_rule_price(&above, NOW, 150_000_000, NOW + MAX_ORACLE_SKEW_SECS + 1)), err(NeltaError::StaleOracle));
+        assert_eq!(code(check_rule_price(&above, NOW, 149_999_999, NOW)), err(NeltaError::NotTriggered));
+        let below = armed(false, 150_000_000).rule;
+        assert!(check_rule_price(&below, NOW, 150_000_000, NOW).is_ok());
+        assert!(check_rule_price(&below, NOW, 1, NOW).is_ok());
+        assert_eq!(code(check_rule_price(&below, NOW, 150_000_001, NOW)), err(NeltaError::NotTriggered));
+    }
+
+    fn token_account(program: Pubkey, mint: Pubkey, owner: Pubkey, len: usize) -> AccountInfo<'static> {
+        let mut data = vec![0u8; len];
+        data[..32].copy_from_slice(mint.as_ref());
+        if len >= 64 {
+            data[32..64].copy_from_slice(owner.as_ref());
+        }
+        let leak = |k: Pubkey| -> &'static Pubkey { Box::leak(Box::new(k)) };
+        AccountInfo::new(leak(Pubkey::new_unique()), false, true, Box::leak(Box::new(0u64)), Box::leak(data.into_boxed_slice()), leak(program), false)
+    }
+
+    /// ReleaseCore only accepts token accounts whose (mint, owner) this reads, so it must not be spoofable.
+    #[test]
+    fn token_account_mint_owner_is_strict() {
+        let owner = Pubkey::new_unique();
+        let ok = token_account(v::TOKEN_PROGRAM, v::WSOL_MINT, owner, 165);
+        assert_eq!(token_account_mint_owner(&ok).unwrap(), (v::WSOL_MINT, owner));
+        let fake = token_account(Pubkey::new_unique(), v::WSOL_MINT, owner, 165);
+        assert_eq!(code(token_account_mint_owner(&fake)), err(NeltaError::InvalidTokenAccount));
+        let short = token_account(v::TOKEN_PROGRAM, v::WSOL_MINT, owner, 71);
+        assert_eq!(code(token_account_mint_owner(&short)), err(NeltaError::InvalidTokenAccount));
+    }
 }

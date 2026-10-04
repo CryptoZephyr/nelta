@@ -1,0 +1,54 @@
+{
+  "slot": 507335776,
+  "accounts": {
+    "position": "71ncsVfsPxZvVgqCDtec6EjSJ9shNnN9odsPt5eAXAbH",
+    "user": "2Vmi3VcoMUALyXWpPdyWmBMbyZK7t4c8rTBJtt2TgGEG",
+    "sol_spot_market": "5MzQRp6hhesVuM3CSAzBfPSNP1WaJyF1ifwkmzcrWLtU",
+    "quote_spot_market": "2QpHj5vzgCdWaGM2KSoGtYJWeSkx24cMyzUDHDrucvRc",
+    "sol_perp_market": "FDejXbUrSy6zayBCL5xuk2SXLHZgr8ppfFTLcHbyJorY",
+    "sol_oracle": "2k3UHX6ehRFzx5fTVvbL6FwXhMjkucjJDL9MuVKLo8TV"
+  },
+  "position": {
+    "owner": "3wtCUZuLHDvZtnYvQ3yhwAYZq8HEC5xuoqPdzqs1yftw",
+    "bump": 254,
+    "ratio_bps": 5000,
+    "rule_nonce": "1",
+    "rule": {
+      "active": false,
+      "above": true,
+      "trigger_price": "110000000",
+      "release_lamports": "40000000",
+      "expiry_ts": "1791158522"
+    }
+  },
+  "user": {
+    "authority": "71ncsVfsPxZvVgqCDtec6EjSJ9shNnN9odsPt5eAXAbH",
+    "sol": {
+      "scaled": "100099997",
+      "amount": "100099999"
+    },
+    "quote": {
+      "scaled": "59456453766",
+      "amount": "59456455"
+    },
+    "perp_base_asset_amount": "-50000000"
+  },
+  "sol_spot_market": {
+    "cumulative_deposit_interest": "10000000244",
+    "decimals": 9
+  },
+  "quote_spot_market": {
+    "cumulative_deposit_interest": "10000000210",
+    "decimals": 6
+  },
+  "sol_perp_market": {
+    "order_step_size": "100000"
+  },
+  "sol_oracle": {
+    "price": "12122664015",
+    "exponent": -8,
+    "publish_time_us": "1791110228200000",
+    "price_precision": "121226640",
+    "publish_ts": 1791110228
+  }
+}

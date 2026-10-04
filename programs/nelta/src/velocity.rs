@@ -30,11 +30,20 @@ const FULL_FILL: u32 = 2 | (100 << 8);
 // User account (after 8-byte discriminator): authority, delegate, name, spot_positions[8], perp_positions[8].
 const USER_SPOT_POSITIONS: usize = 8 + 32 + 32 + 32;
 const SPOT_POSITION_SIZE: usize = 40;
+// SpotPosition: scaled_balance u64 at 0, market_index u16, balance_type u8 (0 = deposit).
+const SPOT_MARKET_INDEX: usize = 32;
+const SPOT_BALANCE_TYPE: usize = 34;
 const USER_PERP_POSITIONS: usize = USER_SPOT_POSITIONS + 8 * SPOT_POSITION_SIZE;
 const PERP_POSITION_SIZE: usize = 80;
+const PERP_BASE_ASSET_AMOUNT: usize = 8;
+const PERP_MARKET_INDEX: usize = 76;
 const SPOT_CUMULATIVE_DEPOSIT_INTEREST: usize = 328;
 const SPOT_CUMULATIVE_INTEREST_PRECISION: u128 = 10_000_000_000;
 const PERP_ORDER_STEP_SIZE: usize = 544;
+// PythLazerOracle (after the discriminator): price i64, publish_time u64 (us), posted_slot u64, exponent i32.
+const ORACLE_PRICE: usize = 8;
+const ORACLE_PUBLISH_TIME: usize = 16;
+const ORACLE_EXPONENT: usize = 32;
 
 pub fn user_pda(authority: &Pubkey) -> Pubkey {
     Pubkey::find_program_address(&[b"user", authority.as_ref(), &0u16.to_le_bytes()], &ID).0
@@ -101,6 +110,11 @@ fn u64_at(d: &[u8], o: usize) -> Result<u64> {
     Ok(u64::from_le_bytes(b.try_into().unwrap()))
 }
 
+fn u16_at(d: &[u8], o: usize) -> Result<u16> {
+    let b = d.get(o..o + 2).ok_or(NeltaError::InvalidAccountData)?;
+    Ok(u16::from_le_bytes(b.try_into().unwrap()))
+}
+
 fn i64_at(d: &[u8], o: usize) -> Result<i64> {
     Ok(u64_at(d, o)? as i64)
 }
@@ -111,10 +125,11 @@ pub fn read_sol_lamports(user: &AccountInfo, sol_spot_market: &AccountInfo) -> R
     let mut scaled = 0u64;
     for i in 0..8 {
         let o = USER_SPOT_POSITIONS + i * SPOT_POSITION_SIZE;
-        let idx = u16::from_le_bytes(ud.get(o + 32..o + 34).ok_or(NeltaError::InvalidAccountData)?.try_into().unwrap());
+        let idx = u16_at(&ud, o + SPOT_MARKET_INDEX)?;
         let balance = u64_at(&ud, o)?;
         if idx == SOL_MARKET && balance > 0 {
-            require!(ud[o + 34] == 0, NeltaError::UnexpectedBorrow);
+            let balance_type = *ud.get(o + SPOT_BALANCE_TYPE).ok_or(NeltaError::InvalidAccountData)?;
+            require!(balance_type == 0, NeltaError::UnexpectedBorrow);
             scaled = balance;
         }
     }
@@ -131,8 +146,8 @@ pub fn read_short(user: &AccountInfo) -> Result<u64> {
     let ud = velocity_data(user)?;
     for i in 0..8 {
         let o = USER_PERP_POSITIONS + i * PERP_POSITION_SIZE;
-        let base = i64_at(&ud, o + 8)?;
-        let idx = u16::from_le_bytes(ud.get(o + 76..o + 78).ok_or(NeltaError::InvalidAccountData)?.try_into().unwrap());
+        let base = i64_at(&ud, o + PERP_BASE_ASSET_AMOUNT)?;
+        let idx = u16_at(&ud, o + PERP_MARKET_INDEX)?;
         if idx == SOL_PERP_INDEX && base != 0 {
             require!(base < 0, NeltaError::UnexpectedLong);
             return Ok(base.unsigned_abs());
@@ -149,9 +164,9 @@ pub fn read_order_step(perp_market: &AccountInfo) -> Result<u64> {
 /// (price in PRICE_PRECISION, publish time in unix seconds) from the Velocity Pyth Lazer oracle.
 pub fn read_oracle_price(oracle: &AccountInfo) -> Result<(u64, i64)> {
     let d = velocity_data(oracle)?;
-    let price = i64_at(&d, 8)?;
-    let publish_us = u64_at(&d, 16)?;
-    let exponent = i32::from_le_bytes(d.get(32..36).ok_or(NeltaError::InvalidAccountData)?.try_into().unwrap());
+    let price = i64_at(&d, ORACLE_PRICE)?;
+    let publish_us = u64_at(&d, ORACLE_PUBLISH_TIME)?;
+    let exponent = i32::from_le_bytes(d.get(ORACLE_EXPONENT..ORACLE_EXPONENT + 4).ok_or(NeltaError::InvalidAccountData)?.try_into().unwrap());
     let publish_ts = i64::try_from(publish_us / 1_000_000).map_err(|_| error!(NeltaError::Overflow))?;
     Ok((to_price_precision(price, exponent)?, publish_ts))
 }
@@ -190,6 +205,151 @@ mod tests {
         let sdk = "f223c68952e1f2b60100e80300000000000000";
         let ours: String = deposit_data(SOL_MARKET, 1_000).iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(ours, sdk);
+    }
+
+    fn fixture(name: &str) -> Vec<u8> {
+        let path = format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+    }
+
+    fn json(name: &str) -> serde_json::Value {
+        serde_json::from_slice(&fixture(name)).unwrap()
+    }
+
+    fn num<T: std::str::FromStr>(v: &serde_json::Value) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        match v {
+            serde_json::Value::String(s) => s.parse().unwrap(),
+            other => other.to_string().parse().unwrap(),
+        }
+    }
+
+    fn account(owner: Pubkey, data: Vec<u8>) -> AccountInfo<'static> {
+        let key: &'static Pubkey = Box::leak(Box::new(Pubkey::default()));
+        let owner: &'static Pubkey = Box::leak(Box::new(owner));
+        AccountInfo::new(key, false, false, Box::leak(Box::new(0u64)), Box::leak(data.into_boxed_slice()), owner, false)
+    }
+
+    fn venue(name: &str) -> AccountInfo<'static> {
+        account(ID, fixture(name))
+    }
+
+    fn code(e: Error) -> u32 {
+        match e {
+            Error::AnchorError(a) => a.error_code_number,
+            Error::ProgramError(p) => panic!("unexpected program error {p:?}"),
+        }
+    }
+
+    fn nelta_code(e: NeltaError) -> u32 {
+        anchor_lang::error::ERROR_CODE_OFFSET + e as u32
+    }
+
+    /// Expected values come from the Velocity SDK's IDL decoder over the same Devnet accounts
+    /// (scripts/src/fixtures.ts), so an offset drift in this file fails here.
+    #[test]
+    fn decoders_match_sdk_on_devnet_fixtures() {
+        let e = json("expected.json");
+        let user = venue("user.bin");
+        let spot = venue("sol_spot_market.bin");
+        assert_eq!(read_sol_lamports(&user, &spot).unwrap(), num::<u64>(&e["user"]["sol"]["amount"]));
+        let perp_base: i64 = num(&e["user"]["perp_base_asset_amount"]);
+        assert!(perp_base < 0);
+        assert_eq!(read_short(&user).unwrap(), perp_base.unsigned_abs());
+        assert_eq!(read_order_step(&venue("sol_perp_market.bin")).unwrap(), num::<u64>(&e["sol_perp_market"]["order_step_size"]));
+        let (price, publish_ts) = read_oracle_price(&venue("sol_oracle.bin")).unwrap();
+        assert_eq!(price, num::<u64>(&e["sol_oracle"]["price_precision"]));
+        assert_eq!(publish_ts, num::<i64>(&e["sol_oracle"]["publish_ts"]));
+    }
+
+    #[test]
+    fn layout_matches_shared_fixture() {
+        let l = &json("layout.json")["velocity"];
+        let pairs = [
+            ("user_spot_positions", USER_SPOT_POSITIONS),
+            ("spot_position_size", SPOT_POSITION_SIZE),
+            ("spot_market_index", SPOT_MARKET_INDEX),
+            ("spot_balance_type", SPOT_BALANCE_TYPE),
+            ("user_perp_positions", USER_PERP_POSITIONS),
+            ("perp_position_size", PERP_POSITION_SIZE),
+            ("perp_base_asset_amount", PERP_BASE_ASSET_AMOUNT),
+            ("perp_market_index", PERP_MARKET_INDEX),
+            ("spot_cumulative_deposit_interest", SPOT_CUMULATIVE_DEPOSIT_INTEREST),
+            ("perp_order_step_size", PERP_ORDER_STEP_SIZE),
+            ("oracle_price", ORACLE_PRICE),
+            ("oracle_publish_time", ORACLE_PUBLISH_TIME),
+            ("oracle_exponent", ORACLE_EXPONENT),
+        ];
+        assert_eq!(l.as_object().unwrap().len(), pairs.len());
+        for (k, v) in pairs {
+            assert_eq!(num::<usize>(&l[k]), v, "{k}");
+        }
+    }
+
+    fn sol_slot(user: &[u8]) -> usize {
+        (0..8)
+            .map(|i| USER_SPOT_POSITIONS + i * SPOT_POSITION_SIZE)
+            .find(|&o| u16::from_le_bytes([user[o + SPOT_MARKET_INDEX], user[o + SPOT_MARKET_INDEX + 1]]) == SOL_MARKET)
+            .unwrap()
+    }
+
+    #[test]
+    fn sol_borrow_is_rejected() {
+        let mut user = fixture("user.bin");
+        let o = sol_slot(&user);
+        user[o + SPOT_BALANCE_TYPE] = 1;
+        let err = read_sol_lamports(&venue_data(user), &venue("sol_spot_market.bin")).unwrap_err();
+        assert_eq!(code(err), nelta_code(NeltaError::UnexpectedBorrow));
+    }
+
+    #[test]
+    fn long_perp_is_rejected() {
+        let mut user = fixture("user.bin");
+        let o = USER_PERP_POSITIONS + PERP_BASE_ASSET_AMOUNT;
+        let base = i64::from_le_bytes(user[o..o + 8].try_into().unwrap());
+        user[o..o + 8].copy_from_slice(&(-base).to_le_bytes());
+        assert_eq!(code(read_short(&venue_data(user)).unwrap_err()), nelta_code(NeltaError::UnexpectedLong));
+    }
+
+    #[test]
+    fn other_markets_are_ignored() {
+        let mut user = fixture("user.bin");
+        let o = sol_slot(&user);
+        user[o + SPOT_MARKET_INDEX..o + SPOT_MARKET_INDEX + 2].copy_from_slice(&7u16.to_le_bytes());
+        let p = USER_PERP_POSITIONS + PERP_MARKET_INDEX;
+        user[p..p + 2].copy_from_slice(&7u16.to_le_bytes());
+        let user = venue_data(user);
+        assert_eq!(read_sol_lamports(&user, &venue("sol_spot_market.bin")).unwrap(), 0);
+        assert_eq!(read_short(&user).unwrap(), 0);
+    }
+
+    #[test]
+    fn non_velocity_accounts_are_rejected() {
+        let fake = Pubkey::new_from_array([7; 32]);
+        let bad = nelta_code(NeltaError::InvalidVenueAccount);
+        let spot = venue("sol_spot_market.bin");
+        assert_eq!(code(read_sol_lamports(&account(fake, fixture("user.bin")), &spot).unwrap_err()), bad);
+        assert_eq!(code(read_sol_lamports(&venue("user.bin"), &account(fake, fixture("sol_spot_market.bin"))).unwrap_err()), bad);
+        assert_eq!(code(read_short(&account(fake, fixture("user.bin"))).unwrap_err()), bad);
+        assert_eq!(code(read_order_step(&account(fake, fixture("sol_perp_market.bin"))).unwrap_err()), bad);
+        assert_eq!(code(read_oracle_price(&account(fake, fixture("sol_oracle.bin"))).unwrap_err()), bad);
+    }
+
+    #[test]
+    fn truncated_accounts_are_rejected() {
+        let bad = nelta_code(NeltaError::InvalidAccountData);
+        let short = |name: &str, len: usize| venue_data(fixture(name)[..len].to_vec());
+        assert_eq!(code(read_short(&short("user.bin", USER_PERP_POSITIONS + 40)).unwrap_err()), bad);
+        assert_eq!(code(read_sol_lamports(&short("user.bin", USER_SPOT_POSITIONS + 20), &venue("sol_spot_market.bin")).unwrap_err()), bad);
+        assert_eq!(code(read_sol_lamports(&venue("user.bin"), &short("sol_spot_market.bin", SPOT_CUMULATIVE_DEPOSIT_INTEREST + 8)).unwrap_err()), bad);
+        assert_eq!(code(read_order_step(&short("sol_perp_market.bin", PERP_ORDER_STEP_SIZE + 4)).unwrap_err()), bad);
+        assert_eq!(code(read_oracle_price(&short("sol_oracle.bin", ORACLE_EXPONENT + 2)).unwrap_err()), bad);
+    }
+
+    fn venue_data(data: Vec<u8>) -> AccountInfo<'static> {
+        account(ID, data)
     }
 
     #[test]

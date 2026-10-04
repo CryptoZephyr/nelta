@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { test } from "node:test";
+import { decodePosition, InvalidVenueState, parseOracle, readOrderStep, readShort, readSpot, targetShort, VELOCITY_LAYOUT } from "./nelta";
+
+// Same Devnet account snapshots and SDK-decoded values the Rust decoder tests use.
+const FIXTURES = join(__dirname, "../../programs/nelta/fixtures");
+const bin = (name: string) => readFileSync(join(FIXTURES, name));
+const expected = JSON.parse(readFileSync(join(FIXTURES, "expected.json"), "utf8"));
+const layout = JSON.parse(readFileSync(join(FIXTURES, "layout.json"), "utf8"));
+
+test("Velocity offsets match the shared layout used by velocity.rs", () => {
+  assert.deepEqual(VELOCITY_LAYOUT, layout.velocity);
+});
+
+test("position decoder matches the shared layout and fixture", () => {
+  const p = decodePosition(bin("position.bin"));
+  const e = expected.position;
+  assert.equal(p.owner.toBase58(), e.owner);
+  assert.equal(p.bump, e.bump);
+  assert.equal(p.ratioBps, e.ratio_bps);
+  assert.equal(p.ruleNonce.toString(), e.rule_nonce);
+  assert.equal(p.rule.active, e.rule.active);
+  assert.equal(p.rule.above, e.rule.above);
+  assert.equal(p.rule.triggerPrice.toString(), e.rule.trigger_price);
+  assert.equal(p.rule.releaseLamports.toString(), e.rule.release_lamports);
+  assert.equal(p.rule.expiryTs.toString(), e.rule.expiry_ts);
+  assert.equal(bin("position.bin").length, layout.position.size);
+  assert.throws(() => decodePosition(bin("user.bin")), /Not a Nelta position/);
+});
+
+test("Velocity readers match the SDK on Devnet fixtures", () => {
+  const user = bin("user.bin");
+  assert.equal(readSpot(user, bin("sol_spot_market.bin"), 1, 9).toString(), expected.user.sol.amount);
+  assert.equal(readSpot(user, bin("quote_spot_market.bin"), 0, 6).toString(), expected.user.quote.amount);
+  assert.equal((-readShort(user)).toString(), expected.user.perp_base_asset_amount);
+  assert.equal(readOrderStep(bin("sol_perp_market.bin")).toString(), expected.sol_perp_market.order_step_size);
+  const o = parseOracle(bin("sol_oracle.bin"));
+  assert.equal(o.price.toString(), expected.sol_oracle.price_precision);
+  assert.equal(o.publishTs, expected.sol_oracle.publish_ts);
+});
+
+test("readers throw on venue states the program rejects", () => {
+  const borrow = Buffer.from(bin("user.bin"));
+  for (let i = 0; i < 8; i++) {
+    const o = layout.velocity.user_spot_positions + i * layout.velocity.spot_position_size;
+    if (borrow.readUInt16LE(o + layout.velocity.spot_market_index) === 1) borrow[o + layout.velocity.spot_balance_type] = 1;
+  }
+  assert.throws(() => readSpot(borrow, bin("sol_spot_market.bin"), 1, 9), InvalidVenueState);
+
+  const long = Buffer.from(bin("user.bin"));
+  const o = layout.velocity.user_perp_positions + layout.velocity.perp_base_asset_amount;
+  long.writeBigInt64LE(-long.readBigInt64LE(o), o);
+  assert.throws(() => readShort(long), InvalidVenueState);
+});
+
+test("targetShort floors to the order step like the program", () => {
+  assert.equal(targetShort(100_000_000n, 5_000, 100_000n), 50_000_000n);
+  assert.equal(targetShort(60_000_000n, 5_000, 100_000n), 30_000_000n);
+  assert.equal(targetShort(123_456_789n, 5_000, 100_000n), 61_700_000n);
+});
