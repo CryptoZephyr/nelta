@@ -69,24 +69,36 @@ export function parseOracle(data: Buffer): { price: bigint; publishTs: number } 
   return { price, publishTs };
 }
 
-/** Deposit balance of a spot market in token base units; `decimals` is the market's mint decimals. */
+/** A venue state the program's readers reject (velocity.rs `UnexpectedBorrow` / `UnexpectedLong`). */
+export class InvalidVenueState extends Error {
+  override name = "InvalidVenueState";
+}
+
+/** Deposit balance of a spot market in token base units; `decimals` is the market's mint decimals. Throws on a borrow. */
 function readSpot(user: Buffer, spotMarket: Buffer, marketIndex: number, decimals: number): bigint {
   let scaled = 0n;
   for (let i = 0; i < 8; i++) {
     const o = USER_SPOT_POSITIONS + i * SPOT_POSITION_SIZE;
     const balance = user.readBigUInt64LE(o);
-    if (user.readUInt16LE(o + 32) === marketIndex && balance > 0n && user[o + 34] === 0) scaled = balance;
+    if (user.readUInt16LE(o + 32) === marketIndex && balance > 0n) {
+      if (user[o + 34] !== 0) throw new InvalidVenueState(`Velocity shows a borrow on spot market ${marketIndex}, which Nelta never opens (UnexpectedBorrow)`);
+      scaled = balance;
+    }
   }
   const lo = spotMarket.readBigUInt64LE(SPOT_CUMULATIVE_DEPOSIT_INTEREST);
   const hi = spotMarket.readBigUInt64LE(SPOT_CUMULATIVE_DEPOSIT_INTEREST + 8);
   return (scaled * ((hi << 64n) | lo)) / SPOT_CUMULATIVE_INTEREST_PRECISION / 10n ** BigInt(9 - decimals);
 }
 
+/** Size of the SOL-PERP short in base units. Throws if the position is long. */
 function readShort(user: Buffer): bigint {
   for (let i = 0; i < 8; i++) {
     const o = USER_PERP_POSITIONS + i * PERP_POSITION_SIZE;
     const base = user.readBigInt64LE(o + 8);
-    if (user.readUInt16LE(o + 76) === 0 && base !== 0n) return base < 0n ? -base : 0n;
+    if (user.readUInt16LE(o + 76) === 0 && base !== 0n) {
+      if (base > 0n) throw new InvalidVenueState("Velocity shows a long SOL-PERP position, which Nelta never opens (UnexpectedLong)");
+      return -base;
+    }
   }
   return 0n;
 }
