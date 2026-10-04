@@ -47,7 +47,8 @@ npx tsx src/e2e.ts recover   # owner closes the hedge and withdraws everything
 (`NELTA_KEEPER_KEYPAIR`), discovers positions from chain, and on every SOL oracle update submits
 `execute_rule` for rules that are triggered, unexpired and backed by a fresh oracle. Venue fills that
 cannot complete revert and are retried on the next update, up to `NELTA_MAX_ATTEMPTS` per rule nonce.
-It keeps no local state, so a restart resumes from chain.
+It keeps no local state, so a restart resumes from chain. It needs `RPC_URL` set to a private Devnet RPC
+and exits if it's unset.
 
 ```bash
 cd scripts
@@ -61,5 +62,5 @@ npx tsx src/e2e.ts state
 The keeper runs for free on GitHub Actions (`.github/workflows/keeper.yml`). Each run watches for about 6 hours and a schedule starts the next one, so it is almost always on (expect short gaps of a few minutes between runs).
 
 - `NELTA_KEEPER_KEYPAIR` (repo secret): a dedicated fee-payer key as a JSON byte array. It only pays fees; it can't move user funds. Keep a little Devnet SOL in it.
-- `RPC_URL` (optional repo secret): a private Devnet RPC. Defaults to the public one.
+- `RPC_URL` (required repo secret): a private Devnet RPC (e.g. Helius, QuickNode, Triton). The run fails if it's missing: the public endpoint rate-limits the keeper, so armed rules can be missed.
 - Start it right away from the Actions tab: "keeper" → "Run workflow".
