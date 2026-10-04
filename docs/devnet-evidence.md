@@ -98,3 +98,25 @@ different perp market (`ConstraintAddress`), replay of the previous nonce (`Stal
 short) and non-owner ratio change (`ConstraintSeeds`). Arm/revoke fixture:
 `5pzgR4jsjzuCwifSPGuUxxN4Jv4urrLnWaun6LbmZ3RQRxd5B3HhYmJVL3uAonWazjyV3UvkCnFGdwY1cpoGFqU5`,
 `2AuxjwTgC3gjAL9HSxhzNbsAFah44BQVhL4Nq8GmUYPq3Xwn42JRi2XaCE6wo95zZxGyQshjT8q2kpi7Nq2LPxsy`.
+
+## Hedge ratio, failures and restarts (2026-10-04)
+
+Same emulator owner `3wtCUZuLHDvZtnYvQ3yhwAYZq8HEC5xuoqPdzqs1yftw`. The new Hedge ratio card changes the ratio and moves
+the short in one transaction (`set_ratio` + `rebalance`, FullFill), so the two can never disagree.
+
+| Step | Signature | State after (as shown in the app) |
+| --- | --- | --- |
+| Add 59.75 dUSDT collateral (approve tapped twice; one request reached the wallet) | `3zqmXknHWUyWihCeWU8J3ZNVGCvfvATnyuMgRLMmV5Juf3pyCJukNxz2HSaEUHv7S5vei7BNdBuB6pFGrGjm3zLg` | collateral 59.75 |
+| Add 0.1001 SOL | `21mssj9TVBSCwQvmvePxrnSPaeN7Poenf3icDwShsUVeGeUCekgbSgB2a47QSxX11fHhEd6P5YfTRqMxf9uKiF13` | SOL 0.1001, target 0 (ratio 0%) |
+| Ratio 0% to 50% (second tap; first ended "No fill this time", ratio still 0%) | `2dbXvxMyfG54FJyWpiWZX84XoySFsareuNyZAdMMfMdik5bLabY2w8uYzxLmr7DbAz93atbBNawvvFjSotViAVka` | 50%, short 0.05 |
+| Ratio 50% to 100% (second tap) | `5uSJp787r56xnNALyzCyDYJuMWoTYCtbu66DfEGiuoNuZyPnhnDTvowj5ULQHHaxArD9FhCRFXAbqMmeH7eZnks3` | 100%, short 0.10 |
+| Ratio 100% to 50% (fourth tap, including the restart test below) | `3gHZZE5JmhwaYi5MaH9LtbAMoaJpYZFoKBUHgrCRXCJX4XrGAXysWNZbEJTTe1XmJRy6VELbHbPf7KXKNxd9PKpb` | 50%, short 0.05 |
+
+- **No fill:** every unfilled try landed as a reverted transaction; the ratio and short stayed as before.
+- **App killed mid-fill:** force-stopped at try 41 of 160 while waiting for a fill. Nothing landed afterwards; on reopen
+  the app showed 100% / short 0.10 unchanged, and a fresh attempt worked.
+- **Duplicate fills:** each try also advances its sibling nonces, so once one lands every other signed try is void.
+  No reverted try landed after either success above.
+- **RPC down:** with the emulator's network off, pull-to-refresh kept the last values under "Showing the last reading".
+- **Not exercised:** the "Needs attention" stale-price notice (shown when Velocity's price is over 2 minutes old) did not
+  trigger during testing; the feed stayed fresh.

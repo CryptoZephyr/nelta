@@ -6,6 +6,7 @@ import { Header } from "../../header";
 import { Icon } from "../../icons";
 import { KeeperStatus, keeperStatus } from "../../keeper";
 import * as plans from "../../plans";
+import { Snapshot } from "../../nelta";
 import { useNow } from "../../now";
 import { connection, useNelta } from "../../store";
 import { color, space, tone } from "../../theme";
@@ -39,6 +40,20 @@ function KeeperLine({ k }: { k: KeeperStatus | null }) {
         </T>
       </View>
     </View>
+  );
+}
+
+function RatioCard({ snap }: { snap: Snapshot }) {
+  const { propose } = useNelta();
+  const current = (snap.position?.ratioBps ?? 0) / 100;
+  const [ratio, setRatio] = useState(current);
+  return (
+    <Card>
+      <T v="h2">Hedge ratio</T>
+      <T v="caption" style={{ marginTop: space.xs }}>How much of the SOL in custody the short covers. Now {current}%.</T>
+      <Segmented options={[25, 50, 75, 100].map((v) => ({ value: v, label: `${v}%` }))} value={ratio} onChange={setRatio} />
+      <Button label="Review change" kind="secondary" disabled={ratio === current} onPress={() => propose(plans.changeRatio(snap, ratio * 100))} />
+    </Card>
   );
 }
 
@@ -167,6 +182,8 @@ export default function Home() {
         )}
         <KeeperLine k={keeper} />
       </Card>
+
+      {!needsCollateral && <RatioCard snap={snap} />}
 
       <Card>
         <Row label="Released to your wallet" value={`${snap.ownerWsol.toFixed(4)} wSOL`} />
