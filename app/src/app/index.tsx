@@ -114,7 +114,7 @@ export default function Welcome() {
       <Animated.View style={rise(story.cta, 8)}>
         {connectError && <Notice tone={connectError.tone} title={connectError.title} body={connectError.body} />}
         <Button label={connecting ? "Waiting for your wallet…" : "Connect wallet"} icon="wallet" loading={connecting} onPress={() => void connectWallet()} />
-        <T v="caption" style={{ textAlign: "center", marginTop: space.md }}>Using Phantom? Turn on Settings → Developer settings → Testnet mode → Solana Devnet first.</T>
+        <T v="caption" style={{ textAlign: "center", marginTop: space.md }}>Using Phantom? Turn on Settings → Developer settings → Testnet mode → Solana Devnet first, turn off Power saving, and unlock Phantom before you approve.</T>
       </Animated.View>
       </ScrollView>
     </SafeAreaView>
