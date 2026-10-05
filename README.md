@@ -1,6 +1,6 @@
 # Nelta
 
-**Nelta keeps your SOL and its hedge together.** Hold SOL, keep part of it hedged with a short, and take SOL out without the two ever getting out of step.
+**Nelta keeps your SOL and its hedge together.** Protect your SOL against a price drop, and take SOL out without your protection going wrong.
 
 Download: [nelta.apk (Android, latest release)](https://github.com/CryptoZephyr/nelta/releases/latest/download/nelta.apk) · Video: not available yet · Docs: this README and [Devnet evidence](docs/devnet-evidence.md) · Built for: Solana Mobile CLOCK IN
 
@@ -11,16 +11,42 @@ Status: working Android app and program on **Solana Devnet** (test funds only)
 
 ## The problem
 
-If you hold SOL and hedge it with a short, you run two positions in two places. Sell some SOL and forget the short, and you're now over-hedged, betting against SOL. Close the short first, and you're exposed until you sell. Today you have to keep both in step by hand, every time, and you have to be at your phone to do it.
+Many SOL holders protect themselves against a price drop with a **hedge**: a bet that SOL goes down, sized to the SOL they hold. If SOL falls, the bet gains about what their SOL loses.
+
+The trouble starts when they take some SOL out. The SOL and the bet live in two separate places, and nothing ties them together:
+
+- You hold **0.10 SOL** and protect half of it with a **0.05 SOL** bet against SOL.
+- You take out **0.04 SOL** to spend. You now hold 0.06 SOL.
+- Your bet is still 0.05 SOL. Half of 0.06 is 0.03, so 0.02 SOL of it no longer protects anything. **It's now a plain bet against SOL that you never chose.** If SOL goes up, you lose on it.
+
+To fix it, you have to remember to shrink the bet yourself, at the right size, every time you move SOL. Miss it, do it late, or have one side fail, and you hold the wrong position. Worse, if you want this to happen at a price ("take out SOL if it hits $210"), you have to be at your phone when it happens.
 
 ## What Nelta does
 
-- **One position, two parts.** Your SOL and its short live together. Nelta only lets them change together.
+- **One position, two parts.** Your SOL and its hedge (the short) live together. Nelta only lets them change together.
 - **Take SOL out in one step.** Release some SOL and the short shrinks by the matching amount in the same transaction. If either part can't happen, nothing happens.
 - **Set one rule, then put your phone away.** For example: "If SOL hits $210, take out 0.04 SOL." A keeper carries it out while your phone is off. It only works once, and you can cancel it any time.
 - **Leave in one tap.** "Keep my SOL, close the hedge" or "Release all, close the hedge". Either one also cancels an armed rule.
 - **See your safety margin.** Home shows how far SOL can move before Velocity would liquidate the short. If something is wrong, it says "Needs attention".
 - **Your SOL only ever comes back to you.** No one else can receive it, not the keeper and not Nelta. You can close everything yourself, without the app.
+
+## Words you'll see in the app
+
+| In the app | What it means |
+| --- | --- |
+| **Hedge** | Your protection against SOL's price falling. It's a bet that SOL goes down, sized to your SOL, so when SOL drops the bet gains about what your SOL loses. |
+| **Hedge 25 / 50 / 75 / 100%** | How much of your SOL is protected. At 50%, half your SOL is protected and half still moves with the price. 100% isn't risk-free: fees and funding still apply. |
+| **SOL-PERP short** | The actual bet behind the hedge, a "perpetual futures" position on Velocity that gains when SOL falls. |
+| **SOL in custody** | The SOL you put into Nelta. It's held by the Nelta program, and only you can take it out. |
+| **dUSDT collateral** | A test stablecoin kept on Velocity as a safety deposit for the short. Nelta mints 100 test dUSDT for you in one tap. |
+| **Sync hedge** | Resize the short so it matches your SOL and chosen %, for example after adding SOL. |
+| **Release** | Take SOL out to your wallet. The short shrinks by the matching amount in the same step. |
+| **Fill / "Velocity didn't fill"** | The trade on Velocity has to go through completely. If it can't right now, nothing changes and you try again. |
+| **Margin headroom** | How far SOL's price can rise before Velocity would force-close your short. More is safer. |
+| **Rule (Armed)** | One instruction you set ahead of time, like "if SOL hits $210, take out 0.04 SOL". It runs once, then switches off. |
+| **Keeper** | A small robot that watches the price and runs your rule while your phone is off. It can only send SOL to you. |
+| **Needs attention** | Something changed outside Nelta (for example Velocity closed part of the short). Check Home, then sync or exit. |
+| **Recovery** | Three steps to take everything back yourself, even without the keeper. |
 
 ## How it works
 
