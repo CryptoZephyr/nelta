@@ -18,12 +18,14 @@ If you hold SOL and hedge it with a short, you run two positions in two places. 
 - **One position, two parts.** Your SOL and its short live together. Nelta only lets them change together.
 - **Take SOL out in one step.** Release some SOL and the short shrinks by the matching amount in the same transaction. If either part can't happen, nothing happens.
 - **Set one rule, then put your phone away.** For example: "If SOL hits $210, take out 0.04 SOL." A keeper carries it out while your phone is off. It only works once, and you can cancel it any time.
+- **Leave in one tap.** "Keep my SOL, close the hedge" or "Release all, close the hedge". Either one also cancels an armed rule.
+- **See your safety margin.** Home shows how far SOL can move before Velocity would liquidate the short. If something is wrong, it says "Needs attention".
 - **Your SOL only ever comes back to you.** No one else can receive it, not the keeper and not Nelta. You can close everything yourself, without the app.
 
 ## How it works
 
 1. Connect your wallet (Phantom, Solflare, any Mobile Wallet Adapter wallet) on Devnet.
-2. Add SOL and some dUSDT collateral, and pick how much to hedge (25–100%).
+2. Tap **Get 100 test dUSDT** (collateral for the short, one approval), add SOL, and pick how much to hedge (25–100%).
 3. Nelta opens the matching SOL-PERP short on Velocity.
 4. Take SOL out yourself, or arm a one-use rule and let the keeper do it while you're away.
 
@@ -44,7 +46,8 @@ flowchart LR
 
 1. On an Android phone, download [nelta.apk](https://github.com/CryptoZephyr/nelta/releases/latest/download/nelta.apk) and install it. If Chrome stalls at 100%, use Samsung Internet or Firefox.
 2. In Phantom: **Settings → Developer settings → Testnet mode → Solana Devnet**. Turn off Android **Power saving**, and unlock Phantom before you approve.
-3. Open Nelta and tap **Connect wallet**. You need some Devnet SOL ([faucet](https://faucet.solana.com)) and Devnet dUSDT (Velocity's test stablecoin, mint `GqmEqYsy8EyvofDpmtFxK8zhYrgWgNokAtYoduQdL7v6`) to fund a position.
+3. Get some free Devnet SOL from the [faucet](https://faucet.solana.com) (about 0.2 SOL is plenty).
+4. Open Nelta, tap **Connect wallet**, and follow the steps on Home: create position → get test dUSDT (Nelta mints it for you) → add SOL → sync hedge. Each step shows "Confirmed on Devnet" with an Explorer link.
 
 No phone? Every step is recorded on Devnet with transaction links in [docs/devnet-evidence.md](docs/devnet-evidence.md).
 
@@ -62,8 +65,9 @@ No phone? Every step is recorded on Devnet with transaction links in [docs/devne
 - **Full lifecycle in the app** (create, fund, hedge, arm rule, keeper run with the app closed, release, recovery), with every signature in [docs/devnet-evidence.md](docs/devnet-evidence.md).
 - **The hosted keeper fired a rule while the app was force-stopped** (GitHub Actions run 37160640617).
 - **16 forbidden actions rejected** on the live program, among them paying a stranger, non-owner signing, replaying a rule, a fake oracle and an expired rule.
-- **Tests:** 25 Rust tests (math and Velocity encoding), 5 app tests, plus CI for program, app and scripts on every PR.
-- **Connected and signed on a real Samsung phone with Phantom** (the 1.2.0 Phantom release flow is new and still being checked on the phone).
+- **Tests:** 25 Rust tests (math and Velocity encoding), 8 app tests, plus CI for program, app and scripts on every PR.
+- **Connected and signed on a real Samsung phone with Phantom.**
+- **1.3.0 end-to-end on the emulator:** setup with test dUSDT, hedge sync, ratio change, rule, both exit buttons and collateral withdrawal, all confirmed on Devnet. The wallet declining, timing out, asking to reconnect or lacking SOL for fees each show a clear message.
 
 ## What we tested when things go wrong
 
@@ -75,6 +79,9 @@ No phone? Every step is recorded on Devnet with transaction links in [docs/devne
 | App killed mid-fill | Nothing half done | Position unchanged on reopen, next try worked |
 | Two taps on Approve | One request | Only one reached the wallet |
 | Network down | Show last known state | "Showing the last reading" |
+| Wallet declines, times out or asks to reconnect | Say nothing changed, offer Try again | "Your wallet didn't sign · Nothing changed" |
+| Network drops after sending | Don't offer a blind retry | "Check before retrying", points to Activity |
+| Wallet has no SOL for fees | Say so before asking to sign | "Your wallet needs Devnet SOL first" + faucet link |
 | Price older than 30 s, or dated in the future | Rule won't fire | Enforced in the program, covered by a unit test |
 
 ## Architecture
@@ -143,6 +150,7 @@ npx expo run:android
 - **Devnet only, with test funds.** No audit has been done.
 - **Fills can take a few tries.** Velocity's Devnet market often can't fill a full order right away, so you may approve a release or hedge change more than once. Unfilled tries change nothing.
 - **Keeper uptime:** the free GitHub Actions keeper has short gaps of a few minutes between runs.
+- **You connect your wallet again each time you open the app.**
 - **Android only.** The APK is installed directly, not from a store.
 - **No demo video yet.**
 
