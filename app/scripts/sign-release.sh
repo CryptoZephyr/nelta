@@ -46,9 +46,10 @@ fi
 rm -f "$OUT.idsig"
 
 certs=$("$APKSIGNER" verify --min-sdk-version 28 --print-certs "$OUT")
-signer=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$certs")
+signer=$(sed -nE 's/^Signer.* certificate SHA-256 digest: ([0-9a-f]+)$/\1/p' <<<"$certs" | tail -1)
 if [ "$signer" != "$expected" ]; then
-  echo "$OUT is signed by $signer, expected $expected" >&2
+  echo "$OUT is signed by $signer, expected $expected. apksigner said:" >&2
+  echo "$certs" >&2
   exit 1
 fi
 "$APKSIGNER" lineage --in "$OUT" --print-certs | grep -qi "$OLD_CERT_SHA256" || {
