@@ -1,4 +1,5 @@
 import { Connection, PublicKey, Transaction, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
+import { SolanaMobileWalletAdapterProtocolErrorCode } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Nelta, RPC, Snapshot, SOL_ORACLE } from "./nelta";
 import idl from "./nelta.json";
@@ -55,6 +56,10 @@ export interface ConnectIssue {
   body: string;
 }
 
+const WALLET_REFUSED = new Set<number>([
+  SolanaMobileWalletAdapterProtocolErrorCode.ERROR_INVALID_PAYLOADS,
+  SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SIGNED,
+]);
 const WALLET_GONE = new Set(["ERROR_SESSION_TIMEOUT", "ERROR_SESSION_CLOSED", "ERROR_ASSOCIATION_CANCELLED"]);
 const CONNECT_TIMEOUT_MS = 20_000;
 
@@ -83,6 +88,20 @@ function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> 
       kind: "failed",
       title: "Your wallet didn’t answer in time",
       body: "Nothing was signed or sent. Keep your wallet unlocked and Power saving off, then try again.",
+      nothingChanged: true,
+    };
+  if (!sent && String(code) === String(SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED))
+    return {
+      kind: "failed",
+      title: "Your wallet asked to connect again",
+      body: "Nothing was signed or sent. Tap Try again and approve the connection in your wallet first.",
+      nothingChanged: true,
+    };
+  if (!sent && WALLET_REFUSED.has(Number(code)))
+    return {
+      kind: "failed",
+      title: "Your wallet couldn’t send this",
+      body: "Nothing changed. Check your wallet has Devnet SOL for fees and is on Devnet, then try again.",
       nothingChanged: true,
     };
   if (!sent && /declin|reject|cancel|not authori[sz]ed|authorization/i.test(raw))

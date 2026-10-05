@@ -19,6 +19,8 @@ function ChangeRow({ c }: { c: Change }) {
   );
 }
 
+const MIN_FEE_LAMPORTS = 10_000_000;
+
 const STEPS = ["Approve in wallet", "Waiting for a fill", "Confirmed on Devnet"];
 
 function stepIndex(p: Phase): number {
@@ -55,11 +57,12 @@ function Progress({ phase, fill }: { phase: Phase; fill?: boolean }) {
 }
 
 export function FlowSheet() {
-  const { flow, approve, dismiss } = useNelta();
+  const { flow, approve, dismiss, snap } = useNelta();
   const insets = useSafeAreaInsets();
   if (!flow) return null;
   const { plan, phase } = flow;
   const busy = phase.kind === "wallet" || phase.kind === "confirming" || phase.kind === "filling";
+  const noFee = snap !== null && snap.walletLamports < MIN_FEE_LAMPORTS;
   return (
     <Modal visible transparent animationType="slide" onRequestClose={dismiss} statusBarTranslucent>
       <Pressable style={st.scrim} onPress={busy ? undefined : dismiss} accessibilityLabel="Close" />
@@ -79,6 +82,13 @@ export function FlowSheet() {
                   <T v="caption" style={{ flex: 1, color: color.text }}>{n}</T>
                 </View>
               ))}
+              {noFee && (
+                <Notice
+                  tone="drift"
+                  title="Your wallet needs Devnet SOL first"
+                  body="It needs about 0.01 SOL to pay network fees. Get free Devnet SOL at faucet.solana.com, then come back."
+                />
+              )}
             </>
           )}
           {busy && <Progress phase={phase} fill={plan.fill} />}
@@ -98,7 +108,11 @@ export function FlowSheet() {
         </ScrollView>
         {phase.kind === "preview" && (
           <>
-            <Button label="Approve in wallet" icon="wallet" onPress={() => void approve()} />
+            {noFee ? (
+              <Button label="Get Devnet SOL" icon="wallet" onPress={() => void Linking.openURL("https://faucet.solana.com")} />
+            ) : (
+              <Button label="Approve in wallet" icon="wallet" onPress={() => void approve()} />
+            )}
             <Button label="Not now" kind="quiet" onPress={dismiss} />
           </>
         )}

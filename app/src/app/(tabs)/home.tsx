@@ -242,6 +242,9 @@ export default function Home() {
           <View style={{ flex: 1 }}><Button label="Release" kind="secondary" disabled={needsSol || !fresh} onPress={() => router.push("/release")} /></View>
           <View style={{ flex: 1 }}><Button label="Add funds" kind="secondary" onPress={() => router.push("/funds")} /></View>
         </View>
+        {snap.shortBase === 0n && snap.solLamports === 0n && snap.collateralBase > 0n && (
+          <Button label="Withdraw dUSDT collateral" kind="quiet" onPress={() => router.push("/recovery")} />
+        )}
       </Card>
     </Screen>
   );
