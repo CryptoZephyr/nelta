@@ -34,20 +34,10 @@ export function disconnect(): void {
 }
 
 /** One wallet approval; the wallet signs and submits. */
-export async function signAndSend(build: (owner: PublicKey) => Promise<Transaction>): Promise<string> {
+export async function signAndSend(build: (owner: PublicKey) => Promise<Transaction>, options: { skipPreflight?: boolean } = {}): Promise<string> {
   return await transact(async (wallet) => {
     const owner = await authorize(wallet);
-    const [sig] = await wallet.signAndSendTransactions({ transactions: [await build(owner)] });
+    const [sig] = await wallet.signAndSendTransactions({ ...options, transactions: [await build(owner)] });
     return sig;
-  });
-}
-
-/** One wallet approval for several signed variants, so the app can retry fill-dependent actions. */
-export async function signBatch(want: number, build: (owner: PublicKey, count: number) => Promise<Transaction[]>): Promise<Transaction[]> {
-  return await transact(async (wallet) => {
-    const owner = await authorize(wallet);
-    const { max_transactions_per_request: max } = await wallet.getCapabilities();
-    const count = max > 0 ? Math.min(want, max) : want;
-    return wallet.signTransactions({ transactions: await build(owner, count) });
   });
 }

@@ -296,11 +296,14 @@ export class Nelta {
       tokenProgram: spl.TOKEN_PROGRAM_ID,
     };
     return [
+      spl.createAssociatedTokenAccountIdempotentInstruction(this.owner, core.ownerToken, this.owner, WSOL_MINT),
       await this.program.methods
         .release(new BN(lamports.toString()))
         .accountsStrict({ owner: this.owner, core } as never)
         .remainingAccounts(marketAccounts({ solSpot: true, perp: true }))
         .instruction(),
+      spl.createCloseAccountInstruction(core.ownerToken, this.owner, this.owner),
+      spl.createAssociatedTokenAccountIdempotentInstruction(this.owner, core.ownerToken, this.owner, WSOL_MINT),
     ];
   }
 
