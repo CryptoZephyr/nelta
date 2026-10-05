@@ -186,6 +186,10 @@ npx expo run:android
 - Solana dApp Store listing.
 - Several rules per position (today: one at a time).
 
+## Security
+
+Found a security problem? Please report it privately, see [SECURITY.md](SECURITY.md).
+
 ## License
 
-No license file yet.
+[MIT](LICENSE)
