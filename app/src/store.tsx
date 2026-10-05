@@ -55,6 +55,7 @@ export interface ConnectIssue {
   body: string;
 }
 
+const WALLET_GONE = new Set(["ERROR_SESSION_TIMEOUT", "ERROR_SESSION_CLOSED", "ERROR_ASSOCIATION_CANCELLED"]);
 const CONNECT_TIMEOUT_MS = 20_000;
 
 const WALLET_SILENT: ConnectIssue = {
@@ -76,6 +77,14 @@ function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> 
   const raw = e instanceof Error ? e.message : JSON.stringify(e);
   if (e instanceof NoFill)
     return { kind: "failed", title: "No fill this time", body: "Velocity didn’t fill it while the price feed was fresh. Nothing changed. Try again in a minute.", nothingChanged: true };
+  const code = (e as { code?: unknown } | null)?.code;
+  if (!sent && (WALLET_GONE.has(String(code)) || /session.*(timed? ?out|closed)/i.test(raw)))
+    return {
+      kind: "failed",
+      title: "Your wallet didn’t answer in time",
+      body: "Nothing was signed or sent. Keep your wallet unlocked and Power saving off, then try again.",
+      nothingChanged: true,
+    };
   if (!sent && /declin|reject|cancel|not authori[sz]ed|authorization/i.test(raw))
     return {
       kind: "failed",
@@ -83,9 +92,9 @@ function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> 
       body: "Nothing was signed or sent. If your wallet was locked, open and unlock it first, then try again.",
       nothingChanged: true,
     };
-  const code = /"Custom":(\d+)|custom program error: 0x([0-9a-f]+)/i.exec(raw);
-  if (code) {
-    const n = code[1] ? Number(code[1]) : parseInt(code[2], 16);
+  const custom = /"Custom":(\d+)|custom program error: 0x([0-9a-f]+)/i.exec(raw);
+  if (custom) {
+    const n = custom[1] ? Number(custom[1]) : parseInt(custom[2], 16);
     const msg = idl.errors.find((x) => x.code === n)?.msg;
     if (msg) return { kind: "failed", title: "Nelta stopped this", body: `${msg}. The whole transaction was undone; nothing moved except the network fee.`, nothingChanged: true };
   }
@@ -209,8 +218,8 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
         if (err === "expired") throw new Error("network: the transaction expired before it landed");
         if (err) throw new Error(err);
       } else {
-        sig = await fillLoop(nelta, plan, set, () => {
-          sent = true;
+        sig = await fillLoop(nelta, plan, set, (v) => {
+          sent = v;
         });
       }
       set({ kind: "done", sig });
@@ -271,7 +280,7 @@ async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: numbe
  * One wallet approval per try. Each try is settled (landed, or its blockhash expired) before the next is signed, so
  * two tries can never both succeed.
  */
-async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, onSent: () => void): Promise<string> {
+async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void): Promise<string> {
   for (let attempt = 1; attempt <= FILL_TRIES; attempt++) {
     set({
       kind: "wallet",
@@ -285,10 +294,11 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, onSent: (
     set({ kind: "filling", attempt, max: FILL_TRIES, set: attempt, sets: FILL_TRIES });
     const sig = "sig" in signed ? signed.sig : await sendWhenFillable(signed.signed, lastValidBlockHeight);
     if (sig === null) continue;
-    onSent();
+    setSent(true);
     const err = await settle(sig, lastValidBlockHeight);
     if (err === null) return sig;
     if (err !== "expired" && !FILL_ERROR.test(err)) throw new Error(err);
+    setSent(false);
   }
   throw new NoFill("Velocity didn’t fill in time");
 }
