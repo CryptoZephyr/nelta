@@ -42,7 +42,7 @@ To fix it, you have to remember to shrink the bet yourself, at the right size, e
 | **Sync hedge** | Resize the short so it matches your SOL and chosen %, for example after adding SOL. |
 | **Release** | Take SOL out to your wallet. The short shrinks by the matching amount in the same step. |
 | **Fill / "Velocity didn't fill"** | The trade on Velocity has to go through completely. If it can't right now, nothing changes and you try again. |
-| **Margin headroom** | How far SOL's price can rise before Velocity would force-close your short. More is safer. |
+| **Margin headroom** | How far SOL's price can rise before Velocity would force-close your short. More is safer. You can put in any amount of SOL, but the more SOL you hedge on the same dUSDT, the less headroom you have. For a big deposit, tap **Get 100 test dUSDT** a few more times. |
 | **Rule (Armed)** | One instruction you set ahead of time, like "if SOL hits $210, take out 0.04 SOL". It runs once, then switches off. |
 | **Keeper** | A small robot that watches the price and runs your rule while your phone is off. It can only send SOL to you. |
 | **Needs attention** | Something changed outside Nelta (for example Velocity closed part of the short). Check Home, then sync or exit. |
