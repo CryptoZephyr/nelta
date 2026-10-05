@@ -23,6 +23,9 @@ export const QUOTE_SPOT_MARKET = new PublicKey("2QpHj5vzgCdWaGM2KSoGtYJWeSkx24cM
 export const SOL_SPOT_MARKET = new PublicKey("5MzQRp6hhesVuM3CSAzBfPSNP1WaJyF1ifwkmzcrWLtU");
 export const SOL_PERP_MARKET = new PublicKey("FDejXbUrSy6zayBCL5xuk2SXLHZgr8ppfFTLcHbyJorY");
 export const DUSDT_MINT = new PublicKey("GqmEqYsy8EyvofDpmtFxK8zhYrgWgNokAtYoduQdL7v6");
+/** Velocity's Devnet test-token faucet; anyone can mint dUSDT from it. */
+export const DUSDT_FAUCET = new PublicKey("V4v1mQiAdLz4qwckEb45WqHYceYizoib39cDBHSWfaB");
+const MINT_TO_USER = Buffer.from([75, 194, 44, 77, 10, 65, 232, 85]);
 export const WSOL_MINT = spl.NATIVE_MINT;
 export const LAMPORTS = 1_000_000_000;
 export const PRICE_PRECISION = 1_000_000;
@@ -47,6 +50,14 @@ const PERP_ORDER_STEP_SIZE = 544;
 const ORACLE_PRICE = 8;
 const ORACLE_PUBLISH_TIME = 16;
 const ORACLE_EXPONENT = 32;
+// Read-only margin fields (app display only; the program never reads them).
+const PERP_QUOTE_ASSET_AMOUNT = 16;
+const USER_NEXT_LIQUIDATION_ID = 4464;
+const USER_STATUS = 4468;
+const USER_STATUS_LIQUIDATING = 1 | 2;
+const PERP_MARGIN_RATIO_MAINTENANCE = 620;
+const SPOT_MAINTENANCE_ASSET_WEIGHT = 660;
+const MARGIN_PRECISION = 10_000;
 
 export const VELOCITY_LAYOUT = {
   user_spot_positions: USER_SPOT_POSITIONS,
@@ -83,6 +94,8 @@ export interface Snapshot {
   walletDusdt: number;
   collateralBase: bigint;
   ownerWsol: number;
+  venueStatus: VenueStatus;
+  margin: Margin;
 }
 
 export function parseOracle(data: Buffer): { price: bigint; publishTs: number } {
@@ -125,6 +138,52 @@ export function readShort(user: Buffer): bigint {
     }
   }
   return 0n;
+}
+
+/** Quote side of the SOL-PERP position in dUSDT base units (positive for a short). */
+export function readPerpQuote(user: Buffer): bigint {
+  for (let i = 0; i < 8; i++) {
+    const o = USER_PERP_POSITIONS + i * PERP_POSITION_SIZE;
+    if (user.readUInt16LE(o + PERP_MARKET_INDEX) === 0 && user.readBigInt64LE(o + PERP_BASE_ASSET_AMOUNT) !== 0n) return user.readBigInt64LE(o + PERP_QUOTE_ASSET_AMOUNT);
+  }
+  return 0n;
+}
+
+export interface VenueStatus {
+  liquidating: boolean;
+  /** How many times Velocity has ever liquidated this account (its next liquidation id starts at 1). */
+  liquidations: number;
+}
+
+export const readVenueStatus = (user: Buffer): VenueStatus => ({
+  liquidating: (user[USER_STATUS] & USER_STATUS_LIQUIDATING) !== 0,
+  liquidations: Math.max(0, user.readUInt16LE(USER_NEXT_LIQUIDATION_ID) - 1),
+});
+
+export interface MarginInputs {
+  collateralUsd: number;
+  sol: number;
+  shortSol: number;
+  quoteUsd: number;
+  price: number;
+  maintMargin: number;
+  solWeight: number;
+}
+
+export interface Margin {
+  equityUsd: number;
+  requiredUsd: number;
+  /** SOL price at which Velocity starts liquidating the short; null when price moves alone can't trigger it. */
+  liquidationPrice: number | null;
+}
+
+/** Velocity's maintenance check, simplified: dUSDT at full weight, custody SOL at its maintenance weight, plus the short's PnL. */
+export function margin(m: MarginInputs): Margin {
+  const equityUsd = m.collateralUsd + m.sol * m.price * m.solWeight + m.quoteUsd - m.shortSol * m.price;
+  const requiredUsd = m.shortSol * m.price * m.maintMargin;
+  const slope = m.shortSol * (1 + m.maintMargin) - m.sol * m.solWeight;
+  const fixed = m.collateralUsd + m.quoteUsd;
+  return { equityUsd, requiredUsd, liquidationPrice: m.shortSol > 0 && slope > 0 ? fixed / slope : null };
 }
 
 export const readOrderStep = (perpMarket: Buffer): bigint => perpMarket.readBigUInt64LE(PERP_ORDER_STEP_SIZE);
@@ -207,18 +266,29 @@ export class Nelta {
     const shortBase = user ? readShort(user.data) : 0n;
     const step = perp ? readOrderStep(perp.data) : 1n;
     const o = oracle ? parseOracle(oracle.data) : { price: 0n, publishTs: 0 };
+    const price = Number(o.price) / PRICE_PRECISION;
     return {
       position,
       solLamports,
       shortBase,
       targetShort: position ? targetShort(solLamports, position.ratioBps, step) : 0n,
       step,
-      price: Number(o.price) / PRICE_PRECISION,
+      price,
       oracleAgeSecs: Math.floor(Date.now() / 1000) - o.publishTs,
       walletLamports,
       walletDusdt: walletDusdt / 1e6,
       collateralBase,
       ownerWsol: ownerWsol / LAMPORTS,
+      venueStatus: user ? readVenueStatus(user.data) : { liquidating: false, liquidations: 0 },
+      margin: margin({
+        collateralUsd: Number(collateralBase) / 1e6,
+        sol: Number(solLamports) / LAMPORTS,
+        shortSol: Number(shortBase) / LAMPORTS,
+        quoteUsd: user ? Number(readPerpQuote(user.data)) / 1e6 : 0,
+        price,
+        maintMargin: perp ? perp.data.readUInt32LE(PERP_MARGIN_RATIO_MAINTENANCE) / MARGIN_PRECISION : 0,
+        solWeight: spot ? spot.data.readUInt32LE(SPOT_MAINTENANCE_ASSET_WEIGHT) / MARGIN_PRECISION : 0,
+      }),
     };
   }
 
@@ -265,6 +335,29 @@ export class Nelta {
 
   async depositDusdtIxs(amount: number): Promise<TransactionInstruction[]> {
     return [await this.depositIx(0, new BN(Math.floor(amount * 1e6)))];
+  }
+
+  /** Mints test dUSDT from Velocity's Devnet faucet to the owner, then deposits it as collateral when a position exists. */
+  async faucetDusdtIxs(amount: number, deposit: boolean): Promise<TransactionInstruction[]> {
+    const ata = this.ownerToken(DUSDT_MINT);
+    const pda = (seed: string) => PublicKey.findProgramAddressSync([Buffer.from(seed), DUSDT_MINT.toBuffer()], DUSDT_FAUCET)[0];
+    const base = new BN(Math.floor(amount * 1e6));
+    const mint = new TransactionInstruction({
+      programId: DUSDT_FAUCET,
+      keys: [
+        { pubkey: pda("faucet_config"), isSigner: false, isWritable: false },
+        { pubkey: DUSDT_MINT, isSigner: false, isWritable: true },
+        { pubkey: ata, isSigner: false, isWritable: true },
+        { pubkey: pda("mint_authority"), isSigner: false, isWritable: false },
+        { pubkey: spl.TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.concat([MINT_TO_USER, base.toArrayLike(Buffer, "le", 8)]),
+    });
+    return [
+      spl.createAssociatedTokenAccountIdempotentInstruction(this.owner, ata, this.owner, DUSDT_MINT),
+      mint,
+      ...(deposit ? [await this.depositIx(0, base)] : []),
+    ];
   }
 
   async setRatioIxs(ratioBps: number): Promise<TransactionInstruction[]> {
