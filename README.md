@@ -1,72 +1,157 @@
 # Nelta
 
-Nelta keeps SOL custody and its SOL-PERP hedge in sync. SOL and dUSDT collateral sit in a Velocity
-account whose authority is a Nelta position PDA, so every change goes through the rules in
-`programs/nelta`:
+**Nelta keeps your SOL and its hedge together.** Hold SOL, keep part of it hedged with a short, and take SOL out without the two ever getting out of step.
 
-- **Paired release** (`release`, `execute_rule`): in one instruction, reduce the short to
-  `floor(remaining_sol * ratio / 10_000 / step) * step` with a `FullFill` market order, withdraw the SOL,
-  and pay it only to the owner's wSOL account. If the fill is incomplete, the whole transaction reverts.
+Download: [nelta.apk (Android, latest release)](https://github.com/CryptoZephyr/nelta/releases/latest/download/nelta.apk) · Video: not available yet · Docs: this README and [Devnet evidence](docs/devnet-evidence.md) · Built for: Solana Mobile CLOCK IN
+
+![Nelta on Android: welcome, change hedge, waiting for a fill, done](docs/img/screens.png)
+
+Built with: Solana Mobile Wallet Adapter · Velocity (SOL-PERP) · Anchor · Expo / React Native
+Status: working Android app and program on **Solana Devnet** (test funds only)
+
+## The problem
+
+If you hold SOL and hedge it with a short, you run two positions in two places. Sell some SOL and forget the short, and you're now over-hedged, betting against SOL. Close the short first, and you're exposed until you sell. Today you have to keep both in step by hand, every time, and you have to be at your phone to do it.
+
+## What Nelta does
+
+- **One position, two parts.** Your SOL and its short live together. Nelta only lets them change together.
+- **Take SOL out in one step.** Release some SOL and the short shrinks by the matching amount in the same transaction. If either part can't happen, nothing happens.
+- **Set one rule, then put your phone away.** For example: "If SOL hits $210, take out 0.04 SOL." A keeper carries it out while your phone is off. It only works once, and you can cancel it any time.
+- **Your SOL only ever comes back to you.** No one else can receive it, not the keeper and not Nelta. You can close everything yourself, without the app.
+
+## How it works
+
+1. Connect your wallet (Phantom, Solflare, any Mobile Wallet Adapter wallet) on Devnet.
+2. Add SOL and some dUSDT collateral, and pick how much to hedge (25–100%).
+3. Nelta opens the matching SOL-PERP short on Velocity.
+4. Take SOL out yourself, or arm a one-use rule and let the keeper do it while you're away.
+
+```mermaid
+flowchart LR
+    A["Your SOL + dUSDT"] --> B["Nelta position<br/>SOL + its short, together"]
+    B -->|"you release, or your rule fires"| C["Short shrinks and SOL is paid out<br/>in one transaction"]
+    C --> D["SOL lands in your wallet only"]
+```
+
+## Why Solana
+
+- **Atomic:** the short reduction and the SOL payout are one Solana transaction. Velocity's full-fill orders either fill completely or the whole thing reverts, so the position can't end up half done.
+- **Program-owned custody:** the Velocity account belongs to a Nelta program address, not to a person. The rules in the program are the only way to move funds.
+- **Mobile Wallet Adapter:** every owner action is signed in your own wallet app on the phone. The keeper never holds your key.
+
+## Try it (about 2 minutes)
+
+1. On an Android phone, download [nelta.apk](https://github.com/CryptoZephyr/nelta/releases/latest/download/nelta.apk) and install it. If Chrome stalls at 100%, use Samsung Internet or Firefox.
+2. In Phantom: **Settings → Developer settings → Testnet mode → Solana Devnet**. Turn off Android **Power saving**, and unlock Phantom before you approve.
+3. Open Nelta and tap **Connect wallet**. You need some Devnet SOL ([faucet](https://faucet.solana.com)) and Devnet dUSDT (Velocity's test stablecoin, mint `GqmEqYsy8EyvofDpmtFxK8zhYrgWgNokAtYoduQdL7v6`) to fund a position.
+
+No phone? Every step is recorded on Devnet with transaction links in [docs/devnet-evidence.md](docs/devnet-evidence.md).
+
+## What's running
+
+| What | Where |
+| --- | --- |
+| Nelta program (Devnet) | `9Rk99npYk6kwtEx7MVuq2SWyr1WQQ7f9S9i8mXY4iJ4R` |
+| Velocity program (Devnet) | `vELoC1audYbSYVRXn1vPaV8Axoa9oU6BYmNGZZBDZ1P` |
+| Hosted keeper | GitHub Actions ([keeper.yml](.github/workflows/keeper.yml)), fee-payer `7kCrKbJ9hAjLFdY26HY5asutdJ4XYadZKajYbu1diqTx` |
+| Android app | [GitHub Releases](https://github.com/CryptoZephyr/nelta/releases/latest). The app shows an "Update" banner when a new version is out |
+
+## Evidence
+
+- **Full lifecycle in the app** (create, fund, hedge, arm rule, keeper run with the app closed, release, recovery), with every signature in [docs/devnet-evidence.md](docs/devnet-evidence.md).
+- **The hosted keeper fired a rule while the app was force-stopped** (GitHub Actions run 37160640617).
+- **16 forbidden actions rejected** on the live program, among them paying a stranger, non-owner signing, replaying a rule, a fake oracle and an expired rule.
+- **Tests:** 25 Rust tests (math and Velocity encoding), 5 app tests, plus CI for program, app and scripts on every PR.
+- **Connected and signed on a real Samsung phone with Phantom** (the 1.2.0 Phantom release flow is new and still being checked on the phone).
+
+## What we tested when things go wrong
+
+| Situation | What should happen | What happened |
+| --- | --- | --- |
+| Velocity can't fill right now | Nothing changes, you can try again | Every unfilled try reverted whole; only the fee was spent |
+| Keeper tries to pay itself | Rejected | `InvalidRecipient` |
+| Rule replayed or used after expiry | Rejected | `StaleNonce` / `RuleExpired` |
+| App killed mid-fill | Nothing half done | Position unchanged on reopen, next try worked |
+| Two taps on Approve | One request | Only one reached the wallet |
+| Network down | Show last known state | "Showing the last reading" |
+| Price older than 30 s, or dated in the future | Rule won't fire | Enforced in the program, covered by a unit test |
+
+## Architecture
+
+```mermaid
+flowchart TB
+    Phone["Android app (Expo)"] -->|"Mobile Wallet Adapter"| Wallet["Your wallet (Phantom, Solflare)"]
+    Wallet -->|"signed by you"| Program["Nelta program (Anchor)"]
+    Keeper["Keeper on GitHub Actions<br/>fee-payer key only"] -->|"execute_rule"| Program
+    Program -->|"program-owned account"| Velocity["Velocity: SOL spot + SOL-PERP"]
+    Program -->|"SOL only to the owner"| Wallet
+```
+
+| Part | What it does |
+| --- | --- |
+| `programs/nelta` | Custody rules: paired release, rebalance, one-use rules, owner recovery |
+| `app/` | Android app: welcome, Home, rule, release, funds, recovery, activity |
+| `scripts/` | Devnet lifecycle scripts and the stateless keeper (`worker.ts`) |
+| `.github/workflows` | CI, the hosted keeper, and the signed APK release |
+
+## Program rules (for reviewers)
+
+- **Paired release** (`release`, `execute_rule`): in one instruction, reduce the short to `floor(remaining_sol * ratio / 10_000 / step) * step` with a `FullFill` market order, withdraw the SOL, and pay it only to the owner's wSOL account. If the fill is incomplete, the whole transaction reverts. The app unwraps it to native SOL in the same transaction. Keeper-run rules pay wSOL.
 - **Rebalance** (owner only): move the short to the same target for the SOL held. The ratio is capped at 100%.
-- **One-use rule**: the owner arms `(trigger price, above/below, release amount, expiry)`. Any keeper can
-  execute it once, with a fresh oracle (at most 30 s old), the matching nonce, and before expiry. A rule can
-  only reduce the hedge and pay the owner. The owner can revoke it at any time.
-- **Owner recovery**: `set_ratio(0)`, then `reduce_hedge` (reduce-only resting order filled by Velocity keepers), `release` and `withdraw_collateral`. None of these need the app or worker.
+- **One-use rule**: the owner arms `(trigger price, above/below, release amount, expiry)`. Any keeper can run it once, with a fresh oracle (at most 30 s old), the matching nonce, and before expiry. It can only shrink the hedge and pay the owner. The owner can revoke it at any time.
+- **Owner recovery**: `set_ratio(0)`, then `reduce_hedge` (a reduce-only resting order that Velocity keepers fill), `release` and `withdraw_collateral`. None of these need the app or the keeper.
 
-Devnet program: `9Rk99npYk6kwtEx7MVuq2SWyr1WQQ7f9S9i8mXY4iJ4R` (Velocity `vELoC1audYbSYVRXn1vPaV8Axoa9oU6BYmNGZZBDZ1P`).
+## Run locally
 
-## Build and test
-
-Requires Rust, Solana CLI 4.x (platform tools 1.57) and Anchor CLI 1.0.2.
+Program (Rust, Solana CLI 4.x with platform tools 1.57, Anchor CLI 1.0.2):
 
 ```bash
-cargo test                                   # math + Velocity encoding (byte-matched to the SDK)
+cargo test
 cd programs/nelta && cargo-build-sbf --sbf-out-dir ../../target/deploy -- --features no-log-ix-name
 anchor idl build -o target/idl/nelta.json
 ```
 
-## Devnet lifecycle
+Devnet lifecycle (`NELTA_OWNER_KEYPAIR` and `NELTA_KEEPER_KEYPAIR` point to keypair files that are never committed; `RPC_URL` should be a private Devnet RPC):
 
 ```bash
 cd scripts && npm ci
-npx tsx src/e2e.ts init      # position PDA + Velocity user owned by it
+npx tsx src/e2e.ts init      # position + Velocity account owned by it
 npx tsx src/e2e.ts fund      # 60 dUSDT collateral + 0.1001 SOL
-npx tsx src/e2e.ts hedge     # 50% short, sent on each oracle update until FullFill succeeds
-npx tsx src/e2e.ts negative  # simulated attacks/edge cases that must fail
-npx tsx src/d10extra.ts     # more forbidden actions: expiry, fake oracle/market, replay, non-owner
-npx tsx src/e2e.ts rule      # keeper executes a one-use rule: reduce + release 0.04 SOL
-npx tsx src/e2e.ts replay    # executed rule cannot run again
-npx tsx src/e2e.ts recover   # owner closes the hedge and withdraws everything
+npx tsx src/e2e.ts hedge     # 50% short
+npx tsx src/e2e.ts negative  # attacks that must fail
+npx tsx src/d10extra.ts      # more forbidden actions
+npx tsx src/e2e.ts arm       # arm a rule, then the owner process exits ("phone off")
+npm run worker               # keeper runs it
+npx tsx src/e2e.ts recover   # owner closes everything
 ```
 
-`NELTA_OWNER_KEYPAIR` and `NELTA_KEEPER_KEYPAIR` point to keypair files (never committed).
-
-## Keeper worker
-
-`scripts/src/worker.ts` executes armed one-use rules. It holds only a fee-payer key
-(`NELTA_KEEPER_KEYPAIR`), discovers positions from chain, and on every SOL oracle update submits
-`execute_rule` for rules that are triggered, unexpired and backed by a fresh oracle. Venue fills that
-cannot complete revert and are retried on the next update, up to `NELTA_MAX_ATTEMPTS` per rule nonce.
-It keeps no local state, so a restart resumes from chain. It needs `RPC_URL` set to a private Devnet RPC
-and exits if it's unset.
+App:
 
 ```bash
-cd scripts
-npx tsx src/e2e.ts arm     # owner arms a rule, then the owner process exits ("phone off")
-npm run worker             # independent keeper executes it
-npx tsx src/e2e.ts state
+cd app && npm ci
+npx tsc --noEmit && npx expo lint && npm test
+npx expo run:android
 ```
 
-## Free hosted keeper
+**Hosted keeper:** [keeper.yml](.github/workflows/keeper.yml) runs about 6 hours at a time and a schedule starts the next run. It needs the repo secrets `NELTA_KEEPER_KEYPAIR` (fee-payer only, it can't move user funds) and `RPC_URL` (a private Devnet RPC).
 
-The keeper runs for free on GitHub Actions (`.github/workflows/keeper.yml`). Each run watches for about 6 hours and a schedule starts the next one, so it is almost always on (expect short gaps of a few minutes between runs).
+**Android releases:** pushing a `vX.Y.Z` tag builds, signs and publishes `nelta.apk`. See [app/RELEASING.md](app/RELEASING.md).
 
-- `NELTA_KEEPER_KEYPAIR` (repo secret): a dedicated fee-payer key as a JSON byte array. It only pays fees; it can't move user funds. Keep a little Devnet SOL in it.
-- `RPC_URL` (required repo secret): a private Devnet RPC (e.g. Helius, QuickNode, Triton). The run fails if it's missing: the public endpoint rate-limits the keeper, so armed rules can be missed.
-- Start it right away from the Actions tab: "keeper" → "Run workflow".
+## Limitations
 
-## Android app releases
+- **Devnet only, with test funds.** No audit has been done.
+- **Fills can take a few tries.** Velocity's Devnet market often can't fill a full order right away, so you may approve a release or hedge change more than once. Unfilled tries change nothing.
+- **Keeper uptime:** the free GitHub Actions keeper has short gaps of a few minutes between runs.
+- **Android only.** The APK is installed directly, not from a store.
+- **No demo video yet.**
 
-The app's in-app updater installs `nelta.apk` from the latest GitHub release. Releases are built and
-signed by `.github/workflows/android-release.yml` when a `vX.Y.Z` tag is pushed; see
-[`app/RELEASING.md`](app/RELEASING.md) for the checklist and the one-time key setup.
+## Roadmap
+
+- Demo video and a 5-person user test.
+- Solana dApp Store listing.
+- Several rules per position (today: one at a time).
+
+## License
+
+No license file yet.
