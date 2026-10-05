@@ -19,7 +19,8 @@ function ChangeRow({ c }: { c: Change }) {
   );
 }
 
-const MIN_FEE_LAMPORTS = 10_000_000;
+const LOW_FEE_LAMPORTS = 10_000_000;
+const MIN_FEE_LAMPORTS = 10_000;
 
 const STEPS = ["Approve in wallet", "Waiting for a fill", "Confirmed on Devnet"];
 
@@ -62,6 +63,7 @@ export function FlowSheet() {
   if (!flow) return null;
   const { plan, phase } = flow;
   const busy = phase.kind === "wallet" || phase.kind === "confirming" || phase.kind === "filling";
+  const lowFee = snap !== null && snap.walletLamports < LOW_FEE_LAMPORTS;
   const noFee = snap !== null && snap.walletLamports < MIN_FEE_LAMPORTS;
   return (
     <Modal visible transparent animationType="slide" onRequestClose={dismiss} statusBarTranslucent>
@@ -82,11 +84,11 @@ export function FlowSheet() {
                   <T v="caption" style={{ flex: 1, color: color.text }}>{n}</T>
                 </View>
               ))}
-              {noFee && (
+              {lowFee && (
                 <Notice
                   tone="drift"
-                  title="Your wallet needs Devnet SOL first"
-                  body="It needs about 0.01 SOL to pay network fees. Get free Devnet SOL at faucet.solana.com, then come back."
+                  title={noFee ? "Your wallet needs Devnet SOL first" : "Your wallet is low on Devnet SOL"}
+                  body="Keep about 0.01 SOL for network fees; creating accounts costs a little more. Get free Devnet SOL at faucet.solana.com."
                 />
               )}
             </>

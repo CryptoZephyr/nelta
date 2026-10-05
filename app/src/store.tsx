@@ -259,11 +259,16 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
  * Waits until a transaction landed or can no longer land. Returns null on success, the on-chain error as JSON,
  * or "expired" if it never landed. Polls over HTTP; websocket confirmations stall when mobile networks drop the socket.
  */
+const SILENT_RPC_MS = 60_000;
+
 async function settle(sig: string, lastValidBlockHeight: number): Promise<string | null> {
   const status = async (history: boolean) =>
     (await connection.getSignatureStatuses([sig], { searchTransactionHistory: history }).catch(() => null))?.value[0] ?? null;
+  let lastHeard = Date.now();
   for (;;) {
     const [st, height] = await Promise.all([status(false), connection.getBlockHeight("confirmed").catch(() => 0)]);
+    if (height > 0) lastHeard = Date.now();
+    else if (Date.now() - lastHeard > SILENT_RPC_MS) throw new Error("network: Devnet stopped answering while confirming");
     if (st?.err) return JSON.stringify(st.err);
     if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return null;
     if (height > lastValidBlockHeight) {
@@ -280,7 +285,7 @@ async function settle(sig: string, lastValidBlockHeight: number): Promise<string
  * fill only works within a few slots of a price update, which is shorter than a wallet approval takes.
  * Returns null if the blockhash ran out first; the try was never sent, so it can never land.
  */
-async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: number): Promise<string | null> {
+async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: number, onBroadcast: () => void): Promise<string | null> {
   const raw = signed.serialize();
   const versioned = VersionedTransaction.deserialize(raw);
   while ((await connection.getBlockHeight("confirmed").catch(() => 0)) < lastValidBlockHeight - EXPIRY_MARGIN_BLOCKS) {
@@ -290,6 +295,7 @@ async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: numbe
     const err = sim.value.err ? JSON.stringify(sim.value.err) : null;
     if (err && FILL_ERROR.test(err)) continue;
     if (err) throw new Error(err);
+    onBroadcast();
     return await connection.sendRawTransaction(raw, { skipPreflight: true });
   }
   return null;
@@ -311,7 +317,7 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
     const signed = await signForFill(async () => n.tx(ixs, blockhash));
     set({ kind: "filling", attempt, max: FILL_TRIES, set: attempt, sets: FILL_TRIES });
-    const sig = "sig" in signed ? signed.sig : await sendWhenFillable(signed.signed, lastValidBlockHeight);
+    const sig = "sig" in signed ? signed.sig : await sendWhenFillable(signed.signed, lastValidBlockHeight, () => setSent(true));
     if (sig === null) continue;
     setSent(true);
     const err = await settle(sig, lastValidBlockHeight);
