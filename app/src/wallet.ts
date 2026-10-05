@@ -1,4 +1,4 @@
-import { SolanaMobileWalletAdapterProtocolErrorCode } from "@solana-mobile/mobile-wallet-adapter-protocol";
+import { SolanaMobileWalletAdapterProtocolErrorCode, SolanaSignTransactions } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { transact, Web3MobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-web3js";
 import { PublicKey, Transaction } from "@solana/web3.js";
 
@@ -39,5 +39,23 @@ export async function signAndSend(build: (owner: PublicKey) => Promise<Transacti
     const owner = await authorize(wallet);
     const [sig] = await wallet.signAndSendTransactions({ ...options, transactions: [await build(owner)] });
     return sig;
+  });
+}
+
+/**
+ * For fills: asks the wallet to sign only, so Nelta can send the moment Velocity can fill. Wallets without
+ * sign-only fall back to sign-and-send.
+ */
+export async function signForFill(build: (owner: PublicKey) => Promise<Transaction>): Promise<{ signed: Transaction } | { sig: string }> {
+  return await transact(async (wallet) => {
+    const owner = await authorize(wallet);
+    const caps = await wallet.getCapabilities().catch(() => null);
+    const tx = await build(owner);
+    if (caps?.features?.includes(SolanaSignTransactions)) {
+      const [signed] = await wallet.signTransactions({ transactions: [tx] });
+      return { signed };
+    }
+    const [sig] = await wallet.signAndSendTransactions({ skipPreflight: true, transactions: [tx] });
+    return { sig };
   });
 }

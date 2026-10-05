@@ -6,7 +6,7 @@ import { Header } from "../../header";
 import { Icon } from "../../icons";
 import { connection, useNelta } from "../../store";
 import { color, space, tone } from "../../theme";
-import { Card, Notice, Pill, Screen, T } from "../../ui";
+import { Card, ErrorState, Loading, Pill, Screen, T } from "../../ui";
 
 export default function ActivityScreen() {
   const { nelta, owner, version } = useNelta();
@@ -40,8 +40,9 @@ export default function ActivityScreen() {
       <Header />
       <T v="h1">Activity</T>
       <T v="body" style={{ color: color.textMuted }}>Every change to your position, and who made it. Tap one to see it on Solana Explorer.</T>
-      {error && <Notice tone="waiting" title="Couldn’t load activity" body="Devnet is busy. Pull down to try again." />}
-      {items?.length === 0 && <T v="caption" style={{ marginTop: space.lg }}>Nothing yet.</T>}
+      {error && <ErrorState title="Couldn’t load activity" body="Devnet is busy. Your funds aren’t affected." onRetry={() => void pull()} retrying={loading} />}
+      {!items && !error && <Loading label="Loading your activity from Devnet…" />}
+      {items?.length === 0 && <T v="caption" style={{ marginTop: space.lg }}>Nothing yet. Every approval you make, and every keeper run, shows up here with a Devnet link.</T>}
       {items && items.length > 0 && (
         <Card style={{ paddingVertical: space.sm }}>
           {items.map((a, i) => (

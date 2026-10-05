@@ -98,17 +98,29 @@ export const release = (snap: Snapshot, lamports: bigint): Plan => {
   };
 };
 
-export const exitKeepSol = (snap: Snapshot): Plan => ({
-  ...changeRatio(snap, 0),
-  title: "Keep my SOL, close the hedge",
-  summary: "Sets the hedge to 0% and closes the short in one transaction. Your SOL stays in Nelta, unhedged, and you can withdraw it any time.",
-});
+/** Exits also turn off an armed rule, so the keeper can’t release SOL the user chose to keep. */
+const withRuleOff = (snap: Snapshot, plan: Plan): Plan => {
+  if (!snap.position?.rule.active) return plan;
+  return {
+    ...plan,
+    changes: [...plan.changes, { label: "Rule", from: "Armed", to: "Off" }],
+    ixs: async (n) => [...(await n.revokeRuleIxs()), ...(await plan.ixs(n))],
+  };
+};
 
-export const exitReleaseAll = (snap: Snapshot): Plan => ({
-  ...release(snap, snap.solLamports),
-  title: "Release all, close the hedge",
-  summary: "Closes the short and sends all SOL in custody to your wallet, in one transaction. Your dUSDT collateral stays on Velocity until you withdraw it.",
-});
+export const exitKeepSol = (snap: Snapshot): Plan =>
+  withRuleOff(snap, {
+    ...changeRatio(snap, 0),
+    title: "Keep my SOL, close the hedge",
+    summary: "Sets the hedge to 0% and closes the short in one transaction. Your SOL stays in Nelta, unhedged, and you can withdraw it any time.",
+  });
+
+export const exitReleaseAll = (snap: Snapshot): Plan =>
+  withRuleOff(snap, {
+    ...release(snap, snap.solLamports),
+    title: "Release all, close the hedge",
+    summary: "Closes the short and sends all SOL in custody to your wallet, in one transaction. Your dUSDT collateral stays on Velocity until you withdraw it.",
+  });
 
 export const armRule = (snap: Snapshot, triggerUsd: number, above: boolean, releaseSol: number, hours: number): Plan => {
   const lamports = BigInt(Math.round(releaseSol * LAMPORTS));

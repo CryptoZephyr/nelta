@@ -5,6 +5,7 @@ import { LAMPORTS } from "../nelta";
 import * as plans from "../plans";
 import { useNelta } from "../store";
 import { color, space, tone } from "../theme";
+import { PositionGate } from "../gate";
 import { Button, Card, Field, Notice, Pill, Row, Screen, T } from "../ui";
 
 const FEE_BUFFER = 0.01 * LAMPORTS;
@@ -12,7 +13,7 @@ const FEE_BUFFER = 0.01 * LAMPORTS;
 export default function Funds() {
   const { snap, propose } = useNelta();
   const [amount, setAmount] = useState("0.1");
-  if (!snap?.position) return <Screen><T v="body">Create your position on Home first.</T></Screen>;
+  if (!snap?.position) return <Screen><PositionGate snap={snap} /></Screen>;
 
   const needsCollateral = snap.collateralBase === 0n;
   const lamports = Math.round(Number(amount) * LAMPORTS);

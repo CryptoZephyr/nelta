@@ -10,7 +10,7 @@ import { Snapshot } from "../../nelta";
 import { useNow } from "../../now";
 import { connection, useNelta } from "../../store";
 import { color, font, space, tone } from "../../theme";
-import { Button, Card, Notice, Pair, Pill, Row, Segmented, Screen, StalePriceNotice, T } from "../../ui";
+import { Button, Card, ErrorState, Loading, Notice, Pair, Pill, Row, Segmented, Screen, StalePriceNotice, T } from "../../ui";
 
 function useKeeper(): KeeperStatus | null {
   const [k, setK] = useState<KeeperStatus | null>(null);
@@ -108,7 +108,7 @@ function MarginLine({ snap }: { snap: Snapshot }) {
   );
 }
 
-function ExitCard({ snap, fresh, inSync }: { snap: Snapshot; fresh: boolean; inSync: boolean }) {
+function ExitCard({ snap, fresh }: { snap: Snapshot; fresh: boolean }) {
   const { propose } = useNelta();
   const router = useRouter();
   const hedged = snap.shortBase > 0n || (snap.position?.ratioBps ?? 0) > 0;
@@ -117,8 +117,7 @@ function ExitCard({ snap, fresh, inSync }: { snap: Snapshot; fresh: boolean; inS
       <T v="h2">Exit</T>
       <T v="caption" style={{ marginTop: space.xs }}>Each one is a single transaction. If Velocity can’t fill it, nothing changes.</T>
       <Button label="Keep my SOL, close hedge" kind="secondary" disabled={!fresh || !hedged} onPress={() => propose(plans.exitKeepSol(snap))} />
-      <Button label="Release all, close hedge" kind="secondary" disabled={!fresh || !inSync || snap.solLamports === 0n} onPress={() => propose(plans.exitReleaseAll(snap))} />
-      {!inSync && <T v="caption" style={{ marginTop: space.xs }}>Release all needs the hedge in sync first.</T>}
+      <Button label="Release all, close hedge" kind="secondary" disabled={!fresh || snap.solLamports === 0n} onPress={() => propose(plans.exitReleaseAll(snap))} />
       <Button label="Step-by-step recovery" kind="quiet" onPress={() => router.push("/recovery")} />
     </Card>
   );
@@ -141,7 +140,7 @@ export default function Home() {
     return (
       <Screen refresh={refreshControl}>
         <Header />
-        {readError ? <Notice tone="failed" title="Couldn’t read Devnet" body={`${readError}. Pull down to try again.`} /> : <T v="caption">Reading your position from Devnet…</T>}
+        {readError ? <ErrorState title="Couldn’t read Devnet" body={`${readError}. Your funds aren’t affected.`} onRetry={() => void onPull()} retrying={pulling} /> : <Loading label="Reading your position from Devnet…" />}
       </Screen>
     );
 
@@ -188,7 +187,7 @@ export default function Home() {
       {liquidating ? (
         <Notice tone="failed" title="Needs attention: Velocity is liquidating your short" body="Collateral got too thin for the short. Nelta won’t add risk until it’s over. You can still release SOL or use Recovery." />
       ) : snap.venueStatus.liquidations > 0 && !inSync && snap.shortBase < snap.targetShort ? (
-        <Notice tone="drift" title="Needs attention: Velocity liquidated part of your short" body="Your short is smaller than Nelta set it and some collateral was used. Add dUSDT before you sync the hedge back, or exit below." />
+        <Notice tone="drift" title="Needs attention: short below target" body={`Adding SOL does this, but Velocity has also liquidated this account before (${snap.venueStatus.liquidations}×). Check your margin below before you sync, or exit.`} />
       ) : null}
 
       <T v="label" style={{ marginTop: space.md }}>SOL in custody</T>
@@ -234,7 +233,7 @@ export default function Home() {
       </Card>
 
       {!needsCollateral && <RatioCard snap={snap} fresh={canAddRisk} />}
-      {(snap.shortBase > 0n || snap.solLamports > 0n) && <ExitCard snap={snap} fresh={fresh} inSync={inSync} />}
+      {(snap.shortBase > 0n || snap.solLamports > 0n) && <ExitCard snap={snap} fresh={fresh} />}
 
       <Card>
         {snap.ownerWsol > 0 && <Row label="Wrapped SOL from rules, in your wallet" value={`${snap.ownerWsol.toFixed(4)} wSOL`} />}
