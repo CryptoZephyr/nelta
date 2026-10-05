@@ -74,7 +74,7 @@ export const release = (snap: Snapshot, lamports: bigint): Plan => {
     changes: [
       { label: "SOL in custody", from: `${sol(snap.solLamports)} SOL`, to: `${sol(o.custodyAfter)} SOL` },
       { label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: `${sol(o.shortAfter)} SOL` },
-      { label: "You receive", to: `${sol(lamports)} wSOL` },
+      { label: "You receive", to: `${sol(lamports)} SOL` },
     ],
     notes: [ATOMIC, OWNER_ONLY],
     fill: true,
@@ -121,7 +121,7 @@ export const withdrawSol = (snap: Snapshot): Plan => ({
   summary: "Sends every SOL in custody to your wallet.",
   changes: [
     { label: "SOL in custody", from: `${sol(snap.solLamports)} SOL`, to: "0 SOL" },
-    { label: "You receive", to: `${sol(snap.solLamports)} wSOL` },
+    { label: "You receive", to: `${sol(snap.solLamports)} SOL` },
   ],
   notes: [OWNER_ONLY],
   ixs: (n) => n.releaseIxs(snap.solLamports),

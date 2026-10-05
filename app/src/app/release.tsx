@@ -35,7 +35,7 @@ export default function Release() {
           <View style={{ marginTop: space.sm }}>
             <Row label="SOL in custody" value={`${sol(snap.solLamports)} → ${sol(outcome.custodyAfter)}`} />
             <Row label="SOL-PERP short" value={`${sol(snap.shortBase)} → ${sol(outcome.shortAfter)}`} />
-            <Row label="You receive" value={`${sol(lamports!)} wSOL`} strong />
+            <Row label="You receive" value={`${sol(lamports!)} SOL`} strong />
           </View>
         </Card>
       )}

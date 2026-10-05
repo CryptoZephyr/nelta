@@ -1,14 +1,12 @@
-import { Connection, NonceAccount, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey, TransactionExpiredBlockheightExceededError, TransactionInstruction } from "@solana/web3.js";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Nelta, RPC, Snapshot, SOL_ORACLE } from "./nelta";
 import idl from "./nelta.json";
 import { Tone } from "./theme";
-import { connect, disconnect, signAndSend, signBatch } from "./wallet";
+import { connect, disconnect, signAndSend } from "./wallet";
 
 export const connection = new Connection(RPC, "confirmed");
-const FILL_ATTEMPTS = 40;
-const NONCES = 4;
-const SIGN_ROUNDS = 3;
+const FILL_TRIES = 10;
 const FILL_ERROR = /0x1891|6289|SuccessCondition/i;
 
 export interface Change {
@@ -62,38 +60,6 @@ async function nextOracleUpdate(timeoutMs = 6_000): Promise<void> {
   }
 }
 
-/**
- * Resubmits one durable-nonce transaction on each oracle update until it fills. Preflight-rejected attempts never land,
- * so the same signature stays valid; returns null if an attempt landed unfilled (reverted whole, nonce consumed).
- */
-async function submitUntilFilled(tx: Transaction, attempts: number, onAttempt: (n: number) => void): Promise<string | null> {
-  const raw = tx.serialize();
-  let last = "no attempts";
-  for (let i = 1; i <= attempts; i++) {
-    onAttempt(i);
-    await nextOracleUpdate();
-    let sig: string;
-    try {
-      sig = await connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: "processed" });
-    } catch (e) {
-      last = (e instanceof Error ? e.message : JSON.stringify(e)).slice(0, 160);
-      if (!/0x1891|SuccessCondition|fetch failed|network|429/i.test(last)) throw new Error(last);
-      continue;
-    }
-    for (let k = 0; k < 30; k++) {
-      const st = (await connection.getSignatureStatus(sig).catch(() => null))?.value;
-      if (st?.err) {
-        const err = JSON.stringify(st.err);
-        if (FILL_ERROR.test(err)) return null;
-        throw new Error(err);
-      }
-      if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return sig;
-      await new Promise((r) => setTimeout(r, 1_000));
-    }
-  }
-  throw new NoFill(`No fill after ${attempts} attempts (${last})`);
-}
-
 /** Turns wallet, RPC and program errors into plain words, and says whether anything could have changed. */
 export interface ConnectIssue {
   tone: Tone;
@@ -106,7 +72,7 @@ const CONNECT_TIMEOUT_MS = 20_000;
 const WALLET_SILENT: ConnectIssue = {
   tone: "drift",
   title: "Your wallet didn’t answer",
-  body: "Phantom stays silent when it isn’t on Devnet. In Phantom: Settings → Developer settings → Testnet mode on, network Solana Devnet. Also turn off Power saving, which can pause the wallet. Then tap Connect again.",
+  body: "Unlock your wallet first, and turn off Android Power saving. Phantom also stays silent when it isn’t on Devnet: Settings → Developer settings → Testnet mode on, network Solana Devnet. Then tap Connect again.",
 };
 
 function connectIssue(e: unknown): ConnectIssue {
@@ -123,7 +89,12 @@ function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> 
   if (e instanceof NoFill)
     return { kind: "failed", title: "No fill this time", body: "Velocity didn’t fill it while the price feed was fresh. Nothing changed. Try again in a minute.", nothingChanged: true };
   if (!sent && /declin|reject|cancel|not authori[sz]ed|authorization/i.test(raw))
-    return { kind: "failed", title: "Cancelled in your wallet", body: "Nothing was signed or sent.", nothingChanged: true };
+    return {
+      kind: "failed",
+      title: "Your wallet didn’t sign",
+      body: "Nothing was signed or sent. If your wallet was locked, open and unlock it first, then try again.",
+      nothingChanged: true,
+    };
   const code = /"Custom":(\d+)|custom program error: 0x([0-9a-f]+)/i.exec(raw);
   if (code) {
     const n = code[1] ? Number(code[1]) : parseInt(code[2], 16);
@@ -242,12 +213,13 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       let sig: string;
       if (!plan.fill) {
         set({ kind: "wallet", why: "Approve one transaction in your wallet." });
-        const { blockhash } = await connection.getLatestBlockhash();
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
         sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash));
         sent = true;
         set({ kind: "confirming", sig });
-        const res = await connection.confirmTransaction(sig, "confirmed");
-        if (res.value.err) throw new Error(JSON.stringify(res.value.err));
+        const err = await settle(sig, blockhash, lastValidBlockHeight);
+        if (err === "expired") throw new Error("network: the transaction expired before it landed");
+        if (err) throw new Error(err);
       } else {
         sig = await fillLoop(nelta, plan, set, () => {
           sent = true;
@@ -267,36 +239,43 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, onSent: () => void): Promise<string> {
-  const addrs = await Promise.all(Array.from({ length: NONCES }, (_, i) => n.nonceAddress(i)));
-  const missing = (await connection.getMultipleAccountsInfo(addrs)).flatMap((a, i) => (a ? [] : [i]));
-  if (missing.length) {
-    set({ kind: "wallet", why: "One-time setup: approve the retry accounts, so later you sign once instead of on every try." });
-    const { blockhash } = await connection.getLatestBlockhash();
-    const sig = await signAndSend(async () => n.tx(await n.createNonceIxs(missing), blockhash));
-    set({ kind: "confirming", sig });
-    const res = await connection.confirmTransaction(sig, "confirmed");
-    if (res.value.err) throw new Error(JSON.stringify(res.value.err));
+/**
+ * Waits until a transaction landed or can no longer land. Returns null on success, the on-chain error as JSON,
+ * or "expired" if it never landed. web3.js rejects with the bare on-chain error when it learns the result by polling.
+ */
+async function settle(sig: string, blockhash: string, lastValidBlockHeight: number): Promise<string | null> {
+  try {
+    const res = await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, "confirmed");
+    return res.value.err ? JSON.stringify(res.value.err) : null;
+  } catch (e) {
+    if (e instanceof TransactionExpiredBlockheightExceededError) return "expired";
+    if (e !== null && typeof e === "object" && !(e instanceof Error)) return JSON.stringify(e);
+    throw e;
   }
-  for (let round = 1; round <= SIGN_ROUNDS; round++) {
-    const infos = await connection.getMultipleAccountsInfo(addrs, "confirmed");
-    const nonces = infos.map((a) => {
-      if (!a) throw new Error("Retry account missing");
-      return NonceAccount.fromAccountData(a.data).nonce;
-    });
-    const built = await plan.ixs(n);
+}
+
+/**
+ * One wallet approval per try, each sent by the wallet with preflight off so a try that can't fill yet still lands
+ * and reverts whole. Each try is settled (landed, or its blockhash expired) before the next is signed, so two
+ * tries can never both succeed.
+ */
+async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, onSent: () => void): Promise<string> {
+  for (let attempt = 1; attempt <= FILL_TRIES; attempt++) {
     set({
       kind: "wallet",
-      why: round === 1 ? "Approve a few signed tries at once. Each try either fills fully or changes nothing." : "Those tries ran out. Approve a fresh set to keep trying.",
+      why: attempt === 1
+        ? "Approve in your wallet. Your wallet may warn it could fail: if Velocity can’t fill it right now, it changes nothing."
+        : `Try ${attempt - 1} didn’t fill, and nothing changed. Approve another try.`,
     });
-    const signed = await signBatch(NONCES, async (_, count) => nonces.slice(0, count).map((nonce, i) => n.durableTx(built, addrs[i], nonce, addrs)));
+    await nextOracleUpdate();
+    const ixs = await plan.ixs(n);
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
+    const sig = await signAndSend(async () => n.tx(ixs, blockhash), { skipPreflight: true });
     onSent();
-    for (const [i, t] of signed.entries()) {
-      const sig = await submitUntilFilled(t, FILL_ATTEMPTS, (attempt) =>
-        set({ kind: "filling", attempt: i * FILL_ATTEMPTS + attempt, max: signed.length * FILL_ATTEMPTS, set: round, sets: SIGN_ROUNDS }),
-      );
-      if (sig) return sig;
-    }
+    set({ kind: "filling", attempt, max: FILL_TRIES, set: attempt, sets: FILL_TRIES });
+    const err = await settle(sig, blockhash, lastValidBlockHeight);
+    if (err === null) return sig;
+    if (err !== "expired" && !FILL_ERROR.test(err)) throw new Error(err);
   }
   throw new NoFill("Velocity didn’t fill in time");
 }
