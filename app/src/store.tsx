@@ -61,42 +61,52 @@ async function nextOracleUpdate(timeoutMs = 6_000): Promise<void> {
   }
 }
 
+async function blockHeight(): Promise<number> {
+  for (let i = 0; i < 15; i++) {
+    const h = await connection.getBlockHeight("confirmed").catch(() => null);
+    if (h !== null) return h;
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  throw new Error("network: couldn’t read the block height from Devnet");
+}
+
 /**
  * Resubmits one signed transaction on each oracle update until it fills. Preflight-rejected attempts never land,
- * so the same signature stays valid; returns null once its blockhash expires or an attempt landed unfilled (reverted whole).
+ * so the same signature stays valid. Returns null only when it can no longer land: it landed unfilled (reverted whole),
+ * or its blockhash expired and it never landed successfully.
  */
 async function submitUntilFilled(tx: Transaction, lastValidBlockHeight: number, attempts: number, onAttempt: (n: number) => void): Promise<string | null> {
   const raw = tx.serialize();
-  let last = "no attempts";
+  let sent: string | undefined;
+  const expire = async (): Promise<string | null> => {
+    while ((await blockHeight()) <= lastValidBlockHeight) await new Promise((r) => setTimeout(r, 2_000));
+    if (!sent) return null;
+    const st = (await connection.getSignatureStatuses([sent], { searchTransactionHistory: true })).value[0];
+    return st && !st.err ? sent : null;
+  };
   for (let i = 1; i <= attempts; i++) {
     onAttempt(i);
     await nextOracleUpdate();
-    const height = await connection.getBlockHeight("confirmed").catch(() => null);
-    if (height !== null && height > lastValidBlockHeight) return null;
-    let sig: string;
+    if ((await blockHeight()) > lastValidBlockHeight) return expire();
     try {
-      sig = await connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: "processed" });
+      sent = await connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: "processed" });
     } catch (e) {
-      last = (e instanceof Error ? e.message : JSON.stringify(e)).slice(0, 160);
-      if (/blockhash not found|block height exceeded/i.test(last)) return null;
-      if (!/0x1891|SuccessCondition|fetch failed|network|429/i.test(last)) throw new Error(last);
+      const last = (e instanceof Error ? e.message : JSON.stringify(e)).slice(0, 160);
+      if (!/0x1891|SuccessCondition|blockhash not found|fetch failed|network|429/i.test(last)) throw new Error(last);
       continue;
     }
     for (let k = 0; k < 30; k++) {
-      const st = (await connection.getSignatureStatus(sig).catch(() => null))?.value;
+      const st = (await connection.getSignatureStatus(sent).catch(() => null))?.value;
       if (st?.err) {
         const err = JSON.stringify(st.err);
         if (FILL_ERROR.test(err)) return null;
         throw new Error(err);
       }
-      if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return sig;
+      if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return sent;
       await new Promise((r) => setTimeout(r, 1_000));
     }
   }
-  while (((await connection.getBlockHeight("confirmed").catch(() => null)) ?? 0) <= lastValidBlockHeight) {
-    await new Promise((r) => setTimeout(r, 2_000));
-  }
-  throw new NoFill(`No fill after ${attempts} attempts (${last})`);
+  return expire();
 }
 
 /** Turns wallet, RPC and program errors into plain words, and says whether anything could have changed. */
