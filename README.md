@@ -64,3 +64,9 @@ The keeper runs for free on GitHub Actions (`.github/workflows/keeper.yml`). Eac
 - `NELTA_KEEPER_KEYPAIR` (repo secret): a dedicated fee-payer key as a JSON byte array. It only pays fees; it can't move user funds. Keep a little Devnet SOL in it.
 - `RPC_URL` (required repo secret): a private Devnet RPC (e.g. Helius, QuickNode, Triton). The run fails if it's missing: the public endpoint rate-limits the keeper, so armed rules can be missed.
 - Start it right away from the Actions tab: "keeper" → "Run workflow".
+
+## Android app releases
+
+The app's in-app updater installs `nelta.apk` from the latest GitHub release. Releases are built and
+signed by `.github/workflows/android-release.yml` when a `vX.Y.Z` tag is pushed; see
+[`app/RELEASING.md`](app/RELEASING.md) for the checklist and the one-time key setup.
