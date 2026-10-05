@@ -183,6 +183,7 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       setSnap(await nelta.snapshot());
       setReadError(null);
     } catch (e) {
+      if ((e as Error).name === "InvalidVenueState") setSnap(null);
       setReadError((e as Error).message);
     }
   }, [nelta]);

@@ -10,9 +10,7 @@ import { Snapshot } from "../../nelta";
 import { useNow } from "../../now";
 import { connection, useNelta } from "../../store";
 import { color, space, tone } from "../../theme";
-import { Button, Card, Notice, Pair, Pill, Row, Segmented, Screen, T } from "../../ui";
-
-const STALE_PRICE_SECS = 120;
+import { Button, Card, Notice, Pair, Pill, Row, Segmented, Screen, StalePriceNotice, T } from "../../ui";
 
 function useKeeper(): KeeperStatus | null {
   const [k, setK] = useState<KeeperStatus | null>(null);
@@ -43,7 +41,7 @@ function KeeperLine({ k }: { k: KeeperStatus | null }) {
   );
 }
 
-function RatioCard({ snap }: { snap: Snapshot }) {
+function RatioCard({ snap, fresh }: { snap: Snapshot; fresh: boolean }) {
   const { propose } = useNelta();
   const current = (snap.position?.ratioBps ?? 0) / 100;
   const [ratio, setRatio] = useState(current);
@@ -52,7 +50,7 @@ function RatioCard({ snap }: { snap: Snapshot }) {
       <T v="h2">Hedge ratio</T>
       <T v="caption" style={{ marginTop: space.xs }}>How much of the SOL in custody the short covers. Now {current}%.</T>
       <Segmented options={[25, 50, 75, 100].map((v) => ({ value: v, label: `${v}%` }))} value={ratio} onChange={setRatio} />
-      <Button label="Review change" kind="secondary" disabled={ratio === current} onPress={() => propose(plans.changeRatio(snap, ratio * 100))} />
+      <Button label="Review change" kind="secondary" disabled={ratio === current || !fresh} onPress={() => propose(plans.changeRatio(snap, ratio * 100))} />
     </Card>
   );
 }
@@ -73,7 +71,7 @@ function Setup() {
 }
 
 export default function Home() {
-  const { snap, readError, refresh, propose } = useNelta();
+  const { nelta, snap, readError, refresh, propose } = useNelta();
   const router = useRouter();
   const keeper = useKeeper();
   const now = useNow();
@@ -107,30 +105,29 @@ export default function Home() {
   const ruleLive = rule.active && rule.expiryTs.toNumber() > now;
   const needsCollateral = snap.collateralBase === 0n;
   const needsSol = snap.solLamports === 0n;
+  const fresh = !!nelta?.oracleFresh(snap);
   const solValue = (Number(snap.solLamports) / 1e9) * snap.price;
 
   const primary = needsCollateral || needsSol ? (
     <Button label={needsCollateral ? "Add dUSDT collateral" : "Add SOL"} onPress={() => router.push("/funds")} />
   ) : !inSync ? (
-    <Button label="Sync hedge" icon="link" onPress={() => propose(plans.syncHedge(snap))} />
+    <Button label="Sync hedge" icon="link" disabled={!fresh} onPress={() => propose(plans.syncHedge(snap))} />
   ) : !ruleLive ? (
-    <Button label="Arm a rule" icon="zap" onPress={() => router.push("/rule")} />
+    <Button label="Arm a rule" icon="zap" disabled={!fresh} onPress={() => router.push("/rule")} />
   ) : (
-    <Button label="Release now" kind="secondary" onPress={() => router.push("/release")} />
+    <Button label="Release now" kind="secondary" disabled={!fresh} onPress={() => router.push("/release")} />
   );
 
   return (
     <Screen refresh={refreshControl} footer={primary}>
       <Header />
       {readError && <Notice tone="waiting" title="Showing the last reading" body="Devnet is slow to answer. Pull down to refresh." />}
-      {!readError && snap.oracleAgeSecs > STALE_PRICE_SECS && (
-        <Notice tone="drift" icon="clock" title="Needs attention" body={`Velocity’s price feed hasn’t updated for ${age(snap.oracleAgeSecs)}. Hedge changes and rules wait until it’s fresh. Your SOL is safe and nothing will move.`} />
-      )}
+      {!fresh && <StalePriceNotice ageSecs={snap.oracleAgeSecs} />}
 
       <T v="label" style={{ marginTop: space.md }}>SOL in custody</T>
       <T v="hero">{sol(snap.solLamports)} SOL</T>
       <T v="caption">
-        ≈ {usd(solValue)} at {usd(snap.price)} · price {age(snap.oracleAgeSecs)} old
+        ≈ {usd(solValue)} at {usd(snap.price)} · price {age(Math.max(0, snap.oracleAgeSecs))} old
       </T>
 
       <Card>
@@ -183,13 +180,13 @@ export default function Home() {
         <KeeperLine k={keeper} />
       </Card>
 
-      {!needsCollateral && <RatioCard snap={snap} />}
+      {!needsCollateral && <RatioCard snap={snap} fresh={fresh} />}
 
       <Card>
         <Row label="Released to your wallet" value={`${snap.ownerWsol.toFixed(4)} wSOL`} />
         <Row label="Collateral" value={`${(Number(snap.collateralBase) / 1e6).toFixed(2)} dUSDT`} />
         <View style={hs.actions}>
-          <View style={{ flex: 1 }}><Button label="Release" kind="secondary" disabled={needsSol} onPress={() => router.push("/release")} /></View>
+          <View style={{ flex: 1 }}><Button label="Release" kind="secondary" disabled={needsSol || !fresh} onPress={() => router.push("/release")} /></View>
           <View style={{ flex: 1 }}><Button label="Add funds" kind="secondary" onPress={() => router.push("/funds")} /></View>
         </View>
       </Card>

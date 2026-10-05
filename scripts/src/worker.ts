@@ -1,19 +1,30 @@
 /**
  * Nelta keeper. Holds only a fee-payer key: it cannot sign for owners and the program only pays
- * the owner's wSOL account. All state is read from chain on every oracle tick, so a restart
+ * the owner's wSOL account. All state is read from chain (positions refreshed every NELTA_POSITIONS_MS), so a restart
  * resumes without local state. Usage: tsx src/worker.ts [--once]
- * Env: RPC_URL, NELTA_KEEPER_KEYPAIR (path or JSON byte array), NELTA_MAX_ATTEMPTS (per rule nonce, default 200),
- * NELTA_POLL_MS (oracle poll fallback, default 5000), NELTA_HEARTBEAT_MS (on-chain heartbeat, default 600000).
+ * Env: RPC_URL (required, a private Devnet RPC), NELTA_KEEPER_KEYPAIR (path or JSON byte array),
+ * NELTA_MAX_ATTEMPTS (per rule nonce, default 200), NELTA_POLL_MS (oracle poll fallback, default 5000),
+ * NELTA_POSITIONS_MS (position set refresh, default 15000), NELTA_HEARTBEAT_MS (on-chain heartbeat, default 600000).
  */
 import { BN } from "@anchor-lang/core";
 import { Connection, PublicKey, sendAndConfirmTransaction, SendTransactionError, Transaction, TransactionInstruction } from "@solana/web3.js";
 import { loadKeypair } from "@velocity-exchange/sdk";
 import { NeltaClient, PositionAccount, SOL_ORACLE, withBudget } from "./client";
 
-const RPC = process.env.RPC_URL ?? "https://api.devnet.solana.com";
+const PUBLIC_RPC = /(^|\/\/)api\.(devnet|testnet|mainnet-beta)\.solana\.com/;
+/** EX_CONFIG: a restart cannot fix it, so the keeper workflow's restart loop fails the job instead of retrying. */
+const EXIT_CONFIG = 78;
+const RPC = process.env.RPC_URL?.trim() ?? "";
+if (!RPC) {
+  console.error("RPC_URL is not set. The keeper needs a private Devnet RPC; the public endpoint rate-limits it and armed rules can be missed.");
+  process.exit(EXIT_CONFIG);
+}
+if (PUBLIC_RPC.test(RPC)) console.warn("WARNING: RPC_URL is a public Solana endpoint. It rate-limits the keeper, so armed rules can be missed. Use a private RPC.");
 const MAX_ATTEMPTS = Number(process.env.NELTA_MAX_ATTEMPTS ?? 200);
 const MAX_ORACLE_AGE_SECS = 30;
+const MAX_ORACLE_SKEW_SECS = 5;
 const POLL_MS = Number(process.env.NELTA_POLL_MS ?? 5_000);
+const POSITIONS_MS = Number(process.env.NELTA_POSITIONS_MS ?? 15_000);
 const HEARTBEAT_MS = Number(process.env.NELTA_HEARTBEAT_MS ?? 10 * 60_000);
 const MEMO = new PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 const TERMINAL = /RuleInactive|StaleNonce|RuleExpired|InvalidRecipient|InvalidTokenAccount|InvalidVenueAccount|UnexpectedLong|UnexpectedBorrow/;
@@ -35,21 +46,39 @@ export function parseOracle(data: Buffer): OraclePrice {
   return { price, publishTs };
 }
 
+/** Mirrors the program's two-sided oracle_fresh check. */
+export function oracleFresh(publishTs: number, now: number): boolean {
+  const age = now - publishTs;
+  return age >= -MAX_ORACLE_SKEW_SECS && age <= MAX_ORACLE_AGE_SECS;
+}
+
 export function isDue(pos: PositionAccount, o: OraclePrice, now: number): boolean {
   const r = pos.rule;
-  if (!r.active || now > r.expiryTs.toNumber() || now - o.publishTs > MAX_ORACLE_AGE_SECS) return false;
+  if (!r.active || now > r.expiryTs.toNumber() || !oracleFresh(o.publishTs, now)) return false;
   return r.above ? o.price.gte(r.triggerPrice) : o.price.lte(r.triggerPrice);
 }
 
-async function positions(): Promise<{ publicKey: PublicKey; account: PositionAccount }[]> {
-  const ns = registry.program.account as never as { position: { all(): Promise<{ publicKey: PublicKey; account: PositionAccount }[]> } };
+type Entry = { publicKey: PublicKey; account: PositionAccount };
+
+async function positions(): Promise<Entry[]> {
+  const ns = registry.program.account as never as { position: { all(): Promise<Entry[]> } };
   return ns.position.all();
 }
 
-async function execute(pos: PositionAccount, o: OraclePrice): Promise<void> {
+/** getProgramAccounts is the heaviest call, so it runs on its own slower cadence instead of on every oracle tick. */
+const cache = new Map<string, Entry>();
+async function refreshPositions(): Promise<Entry[]> {
+  const all = await positions();
+  cache.clear();
+  for (const p of all) cache.set(p.publicKey.toBase58(), p);
+  return all;
+}
+
+/** Resolves true once the rule needs no retry on this oracle data (executed, terminal, or out of attempts). */
+async function execute(address: PublicKey, pos: PositionAccount, o: OraclePrice): Promise<boolean> {
   const key = `${pos.owner.toBase58()}:${pos.ruleNonce.toString()}`;
   const n = (attempts.get(key) ?? 0) + 1;
-  if (n > MAX_ATTEMPTS) return;
+  if (n > MAX_ATTEMPTS) return true;
   attempts.set(key, n);
   const nelta = new NeltaClient(conn, pos.owner, keeper);
   const ix = await nelta.executeRuleIx(keeper.publicKey, pos.ruleNonce);
@@ -58,17 +87,20 @@ async function execute(pos: PositionAccount, o: OraclePrice): Promise<void> {
     const tx = await conn.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
     if (tx?.meta?.err) throw new Error(`confirmed with error ${JSON.stringify(tx.meta.err)}`);
     const after = await nelta.fetchPosition();
+    if (after) cache.set(address.toBase58(), { publicKey: address, account: after });
     log(`EXECUTED ${key} at ${o.price.toNumber() / 1e6} USD, attempt ${n}: ${sig}; rule active after = ${after?.rule.active}`);
+    return true;
   } catch (e) {
     const logs = e instanceof SendTransactionError ? (e.logs ?? []) : [];
     const reason = logs.filter((l) => /Error/.test(l)).slice(-1)[0] ?? String((e as Error).message ?? e).slice(0, 160);
     if (TERMINAL.test(reason)) {
       attempts.set(key, MAX_ATTEMPTS);
       log(`GAVE UP ${key}: ${reason}`);
-    } else {
-      log(`retry ${key} attempt ${n}/${MAX_ATTEMPTS}: ${reason}`);
-      if (n === MAX_ATTEMPTS) log(`ALERT ${key}: retry cap reached, rule left armed for the owner`);
+      return true;
     }
+    log(`retry ${key} attempt ${n}/${MAX_ATTEMPTS}: ${reason}`);
+    if (n === MAX_ATTEMPTS) log(`ALERT ${key}: retry cap reached, rule left armed for the owner`);
+    return n === MAX_ATTEMPTS;
   }
 }
 
@@ -81,15 +113,17 @@ async function heartbeat(): Promise<void> {
 
 let busy = false;
 let lastSeen: Buffer | undefined;
+/** lastSeen only advances once every due rule is settled, so a failed tick is retried on the next poll of the same data. */
 async function tick(data: Buffer): Promise<void> {
   if (busy || lastSeen?.equals(data)) return;
   busy = true;
-  lastSeen = Buffer.from(data);
   try {
     const o = parseOracle(data);
     const now = Math.floor(Date.now() / 1000);
-    const due = (await positions()).filter(({ account }) => isDue(account, o, now));
-    for (const { account } of due) await execute(account, o);
+    const due = [...cache.values()].filter(({ account }) => isDue(account, o, now));
+    let settled = true;
+    for (const { publicKey, account } of due) settled = (await execute(publicKey, account, o)) && settled;
+    if (settled) lastSeen = Buffer.from(data);
   } catch (e) {
     log(`tick error: ${String((e as Error).message ?? e).slice(0, 160)}`);
   } finally {
@@ -98,7 +132,7 @@ async function tick(data: Buffer): Promise<void> {
 }
 
 async function main() {
-  const all = await positions();
+  const all = await refreshPositions();
   log(`keeper ${keeper.publicKey.toBase58()} watching ${all.length} position(s), ${all.filter((p) => p.account.rule.active).length} armed`);
   if (process.argv.includes("--once")) {
     const info = await conn.getAccountInfo(SOL_ORACLE);
@@ -112,7 +146,22 @@ async function main() {
   setInterval(() => {
     void conn.getAccountInfo(SOL_ORACLE, "processed").then((info) => info && tick(info.data)).catch(() => undefined);
   }, POLL_MS);
-  setInterval(() => void positions().then((ps) => log(`alive: ${ps.length} position(s), ${ps.filter((p) => p.account.rule.active).length} armed`)).catch(() => undefined), 10 * 60_000);
+  setInterval(() => void refreshPositions().catch((e) => log(`positions refresh failed: ${String((e as Error).message ?? e).slice(0, 120)}`)), POSITIONS_MS);
+  setInterval(() => {
+    const ps = [...cache.values()];
+    log(`alive: ${ps.length} position(s), ${ps.filter((p) => p.account.rule.active).length} armed`);
+  }, 10 * 60_000);
 }
 
-if (require.main === module) void main();
+if (require.main === module) {
+  // A stray rejection must not stop the watch loop; a thrown exception leaves state unknown, so exit and let the runner restart us.
+  process.on("unhandledRejection", (e) => log(`unhandled rejection: ${String((e as Error)?.stack ?? e).slice(0, 400)}`));
+  process.on("uncaughtException", (e) => {
+    log(`FATAL uncaught exception: ${String(e?.stack ?? e).slice(0, 400)}`);
+    process.exit(1);
+  });
+  main().catch((e) => {
+    log(`FATAL startup: ${String((e as Error)?.stack ?? e).slice(0, 400)}`);
+    process.exit(1);
+  });
+}

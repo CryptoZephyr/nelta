@@ -29,15 +29,40 @@ export const PRICE_PRECISION = 1_000_000;
 const NONCE_SEED = "nelta-nonce";
 const BPS = 10_000;
 const MAX_ORACLE_AGE_SECS = 30;
+export const MAX_ORACLE_SKEW_SECS = 5;
 
 // Velocity account layouts, mirrored from programs/nelta/src/velocity.rs.
+// Both sides are checked against programs/nelta/fixtures/layout.json in their tests.
 const USER_SPOT_POSITIONS = 8 + 32 + 32 + 32;
 const SPOT_POSITION_SIZE = 40;
+const SPOT_MARKET_INDEX = 32;
+const SPOT_BALANCE_TYPE = 34;
 const USER_PERP_POSITIONS = USER_SPOT_POSITIONS + 8 * SPOT_POSITION_SIZE;
 const PERP_POSITION_SIZE = 80;
+const PERP_BASE_ASSET_AMOUNT = 8;
+const PERP_MARKET_INDEX = 76;
 const SPOT_CUMULATIVE_DEPOSIT_INTEREST = 328;
 const SPOT_CUMULATIVE_INTEREST_PRECISION = 10_000_000_000n;
 const PERP_ORDER_STEP_SIZE = 544;
+const ORACLE_PRICE = 8;
+const ORACLE_PUBLISH_TIME = 16;
+const ORACLE_EXPONENT = 32;
+
+export const VELOCITY_LAYOUT = {
+  user_spot_positions: USER_SPOT_POSITIONS,
+  spot_position_size: SPOT_POSITION_SIZE,
+  spot_market_index: SPOT_MARKET_INDEX,
+  spot_balance_type: SPOT_BALANCE_TYPE,
+  user_perp_positions: USER_PERP_POSITIONS,
+  perp_position_size: PERP_POSITION_SIZE,
+  perp_base_asset_amount: PERP_BASE_ASSET_AMOUNT,
+  perp_market_index: PERP_MARKET_INDEX,
+  spot_cumulative_deposit_interest: SPOT_CUMULATIVE_DEPOSIT_INTEREST,
+  perp_order_step_size: PERP_ORDER_STEP_SIZE,
+  oracle_price: ORACLE_PRICE,
+  oracle_publish_time: ORACLE_PUBLISH_TIME,
+  oracle_exponent: ORACLE_EXPONENT,
+};
 
 const spotVault = (marketIndex: number): PublicKey =>
   PublicKey.findProgramAddressSync([Buffer.from("spot_market_vault"), new BN(marketIndex).toArrayLike(Buffer, "le", 2)], VELOCITY)[0];
@@ -52,6 +77,7 @@ export interface Snapshot {
   targetShort: bigint;
   step: bigint;
   price: number;
+  /** now - publishTs; negative when the feed is stamped in the future. */
   oracleAgeSecs: number;
   walletLamports: number;
   walletDusdt: number;
@@ -60,34 +86,48 @@ export interface Snapshot {
 }
 
 export function parseOracle(data: Buffer): { price: bigint; publishTs: number } {
-  const raw = data.readBigInt64LE(8);
-  const publishTs = Number(data.readBigUInt64LE(16) / 1_000_000n);
-  const shift = 6 + data.readInt32LE(32);
+  const raw = data.readBigInt64LE(ORACLE_PRICE);
+  const publishTs = Number(data.readBigUInt64LE(ORACLE_PUBLISH_TIME) / 1_000_000n);
+  const shift = 6 + data.readInt32LE(ORACLE_EXPONENT);
   const price = shift >= 0 ? raw * 10n ** BigInt(shift) : raw / 10n ** BigInt(-shift);
   return { price, publishTs };
 }
 
-/** Deposit balance of a spot market in token base units; `decimals` is the market's mint decimals. */
-function readSpot(user: Buffer, spotMarket: Buffer, marketIndex: number, decimals: number): bigint {
+/** A venue state the program's readers reject (velocity.rs `UnexpectedBorrow` / `UnexpectedLong`). */
+export class InvalidVenueState extends Error {
+  override name = "InvalidVenueState";
+}
+
+/** Deposit balance of a spot market in token base units; `decimals` is the market's mint decimals. Throws on a borrow. */
+export function readSpot(user: Buffer, spotMarket: Buffer, marketIndex: number, decimals: number): bigint {
   let scaled = 0n;
   for (let i = 0; i < 8; i++) {
     const o = USER_SPOT_POSITIONS + i * SPOT_POSITION_SIZE;
     const balance = user.readBigUInt64LE(o);
-    if (user.readUInt16LE(o + 32) === marketIndex && balance > 0n && user[o + 34] === 0) scaled = balance;
+    if (user.readUInt16LE(o + SPOT_MARKET_INDEX) === marketIndex && balance > 0n) {
+      if (user[o + SPOT_BALANCE_TYPE] !== 0) throw new InvalidVenueState(`Velocity shows a borrow on spot market ${marketIndex}, which Nelta never opens (UnexpectedBorrow)`);
+      scaled = balance;
+    }
   }
   const lo = spotMarket.readBigUInt64LE(SPOT_CUMULATIVE_DEPOSIT_INTEREST);
   const hi = spotMarket.readBigUInt64LE(SPOT_CUMULATIVE_DEPOSIT_INTEREST + 8);
   return (scaled * ((hi << 64n) | lo)) / SPOT_CUMULATIVE_INTEREST_PRECISION / 10n ** BigInt(9 - decimals);
 }
 
-function readShort(user: Buffer): bigint {
+/** Size of the SOL-PERP short in base units. Throws if the position is long. */
+export function readShort(user: Buffer): bigint {
   for (let i = 0; i < 8; i++) {
     const o = USER_PERP_POSITIONS + i * PERP_POSITION_SIZE;
-    const base = user.readBigInt64LE(o + 8);
-    if (user.readUInt16LE(o + 76) === 0 && base !== 0n) return base < 0n ? -base : 0n;
+    const base = user.readBigInt64LE(o + PERP_BASE_ASSET_AMOUNT);
+    if (user.readUInt16LE(o + PERP_MARKET_INDEX) === 0 && base !== 0n) {
+      if (base > 0n) throw new InvalidVenueState("Velocity shows a long SOL-PERP position, which Nelta never opens (UnexpectedLong)");
+      return -base;
+    }
   }
   return 0n;
 }
+
+export const readOrderStep = (perpMarket: Buffer): bigint => perpMarket.readBigUInt64LE(PERP_ORDER_STEP_SIZE);
 
 const POSITION_DISCRIMINATOR = Buffer.from(idl.accounts[0].discriminator);
 const u64 = (d: Buffer, o: number) => new BN(d.readBigUInt64LE(o).toString());
@@ -165,7 +205,7 @@ export class Nelta {
     const solLamports = user && spot ? readSpot(user.data, spot.data, 1, 9) : 0n;
     const collateralBase = user && quoteSpot ? readSpot(user.data, quoteSpot.data, 0, 6) : 0n;
     const shortBase = user ? readShort(user.data) : 0n;
-    const step = perp ? perp.data.readBigUInt64LE(PERP_ORDER_STEP_SIZE) : 1n;
+    const step = perp ? readOrderStep(perp.data) : 1n;
     const o = oracle ? parseOracle(oracle.data) : { price: 0n, publishTs: 0 };
     return {
       position,
@@ -174,7 +214,7 @@ export class Nelta {
       targetShort: position ? targetShort(solLamports, position.ratioBps, step) : 0n,
       step,
       price: Number(o.price) / PRICE_PRECISION,
-      oracleAgeSecs: Math.max(0, Math.floor(Date.now() / 1000) - o.publishTs),
+      oracleAgeSecs: Math.floor(Date.now() / 1000) - o.publishTs,
       walletLamports,
       walletDusdt: walletDusdt / 1e6,
       collateralBase,
@@ -182,7 +222,7 @@ export class Nelta {
     };
   }
 
-  oracleFresh = (s: Snapshot) => s.oracleAgeSecs <= MAX_ORACLE_AGE_SECS;
+  oracleFresh = (s: Snapshot) => s.oracleAgeSecs >= -MAX_ORACLE_SKEW_SECS && s.oracleAgeSecs <= MAX_ORACLE_AGE_SECS;
 
   async createPositionIxs(ratioBps: number): Promise<TransactionInstruction[]> {
     const init = await this.program.methods

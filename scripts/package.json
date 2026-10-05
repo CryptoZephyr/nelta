@@ -5,7 +5,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "e2e": "tsx src/e2e.ts",
-    "worker": "tsx src/worker.ts"
+    "worker": "tsx src/worker.ts",
+    "fixtures": "tsx src/fixtures.ts"
   },
   "dependencies": {
     "@anchor-lang/core": "1.0.2",

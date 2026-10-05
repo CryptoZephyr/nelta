@@ -15,6 +15,7 @@ import {
   ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { age } from "./format";
 import { Icon, IconName } from "./icons";
 import { color, font, radius, space, tone as tones, Tone, touch } from "./theme";
 
@@ -173,6 +174,11 @@ export function Notice({ tone, title, body, icon }: { tone: Tone; title: string;
       </View>
     </View>
   );
+}
+
+export function StalePriceNotice({ ageSecs }: { ageSecs: number }) {
+  const why = ageSecs < 0 ? "Velocity’s price feed shows a time in the future, so it can’t be trusted yet." : `Velocity’s price feed hasn’t updated for ${age(ageSecs)}.`;
+  return <Notice tone="drift" icon="clock" title="Needs attention" body={`${why} Hedge changes and rules wait until it’s fresh. Your SOL is safe and nothing will move.`} />;
 }
 
 export const s = StyleSheet.create({
