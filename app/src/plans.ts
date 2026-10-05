@@ -42,6 +42,22 @@ export const depositDusdt = (snap: Snapshot): Plan => ({
   ixs: (n) => n.depositDusdtIxs(snap.walletDusdt),
 });
 
+export const TEST_DUSDT = 100;
+
+export const faucetCollateral = (snap: Snapshot): Plan => {
+  const now = Number(snap.collateralBase) / 1e6;
+  return {
+    title: `Get ${TEST_DUSDT} test dUSDT as collateral`,
+    summary: "Mints free Devnet dUSDT from Velocity’s test faucet and adds it as collateral for the short, in one transaction. Devnet only; it has no real value.",
+    changes: [
+      { label: "Collateral", from: `${now.toFixed(2)} dUSDT`, to: `${(now + TEST_DUSDT).toFixed(2)} dUSDT` },
+      { label: "Your SOL", to: "Unchanged (only the network fee)" },
+    ],
+    notes: ["SOL deposits don’t create dUSDT. This is the step that does."],
+    ixs: (n) => n.faucetDusdtIxs(TEST_DUSDT, true),
+  };
+};
+
 export const syncHedge = (snap: Snapshot): Plan => ({
   title: "Sync hedge",
   summary: "Moves the SOL-PERP short to its target so it matches the SOL Nelta holds.",
@@ -81,6 +97,30 @@ export const release = (snap: Snapshot, lamports: bigint): Plan => {
     ixs: (n) => n.releaseIxs(lamports),
   };
 };
+
+/** Exits also turn off an armed rule, so the keeper can’t release SOL the user chose to keep. */
+const withRuleOff = (snap: Snapshot, plan: Plan): Plan => {
+  if (!snap.position?.rule.active) return plan;
+  return {
+    ...plan,
+    changes: [...plan.changes, { label: "Rule", from: "Armed", to: "Off" }],
+    ixs: async (n) => [...(await n.revokeRuleIxs()), ...(await plan.ixs(n))],
+  };
+};
+
+export const exitKeepSol = (snap: Snapshot): Plan =>
+  withRuleOff(snap, {
+    ...changeRatio(snap, 0),
+    title: "Keep my SOL, close the hedge",
+    summary: "Sets the hedge to 0% and closes the short in one transaction. Your SOL stays in Nelta, unhedged, and you can withdraw it any time.",
+  });
+
+export const exitReleaseAll = (snap: Snapshot): Plan =>
+  withRuleOff(snap, {
+    ...release(snap, snap.solLamports),
+    title: "Release all, close the hedge",
+    summary: "Closes the short and sends all SOL in custody to your wallet, in one transaction. Your dUSDT collateral stays on Velocity until you withdraw it.",
+  });
 
 export const armRule = (snap: Snapshot, triggerUsd: number, above: boolean, releaseSol: number, hours: number): Plan => {
   const lamports = BigInt(Math.round(releaseSol * LAMPORTS));

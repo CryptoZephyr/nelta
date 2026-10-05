@@ -9,8 +9,8 @@ import * as plans from "../../plans";
 import { Snapshot } from "../../nelta";
 import { useNow } from "../../now";
 import { connection, useNelta } from "../../store";
-import { color, space, tone } from "../../theme";
-import { Button, Card, Notice, Pair, Pill, Row, Segmented, Screen, StalePriceNotice, T } from "../../ui";
+import { color, font, space, tone } from "../../theme";
+import { Button, Card, ErrorState, Loading, Notice, Pair, Pill, Row, Segmented, Screen, StalePriceNotice, T } from "../../ui";
 
 function useKeeper(): KeeperStatus | null {
   const [k, setK] = useState<KeeperStatus | null>(null);
@@ -70,6 +70,59 @@ function Setup() {
   );
 }
 
+function SetupSteps({ snap }: { snap: Snapshot }) {
+  const steps = [
+    { done: true, label: "Create your position" },
+    { done: snap.collateralBase > 0n, label: "Get dUSDT collateral for the short" },
+    { done: snap.solLamports > 0n, label: "Add SOL to custody" },
+    { done: snap.solLamports > 0n && snap.shortBase === snap.targetShort, label: "Sync the hedge" },
+  ];
+  const next = steps.findIndex((s) => !s.done);
+  return (
+    <Card>
+      <T v="h2">Finish setup · step {next + 1} of {steps.length}</T>
+      {steps.map((s, i) => (
+        <View key={s.label} style={hs.check}>
+          <Icon name={s.done ? "check" : i === next ? "arrow" : "clock"} size={18} tint={s.done ? tone.sync.fg : i === next ? color.brand : color.textMuted} />
+          <T v="body" style={s.done ? { color: color.textMuted } : i === next ? { fontFamily: font.semibold } : null}>{s.label}</T>
+        </View>
+      ))}
+      <T v="caption" style={{ marginTop: space.xs }}>Use the button at the bottom for the next step.</T>
+    </Card>
+  );
+}
+
+function MarginLine({ snap }: { snap: Snapshot }) {
+  const m = snap.margin;
+  const buffer = m.equityUsd - m.requiredUsd;
+  const low = m.requiredUsd > 0 && m.equityUsd < m.requiredUsd * 2;
+  const t = low ? tone.drift : tone.sync;
+  return (
+    <View style={[hs.margin, { backgroundColor: t.bg }]}>
+      <T v="label" style={{ color: t.fg }}>{low ? "Margin is getting thin" : "Margin is healthy"}</T>
+      <T v="caption" style={{ color: t.fg }}>
+        ≈ {usd(Math.max(0, buffer))} above what Velocity needs to keep the short open.{" "}
+        {m.liquidationPrice === null ? "Your SOL in custody covers the short, so price moves alone can’t liquidate it." : `Velocity would start liquidating if SOL rose to ≈ ${usd(m.liquidationPrice)}.`}
+      </T>
+    </View>
+  );
+}
+
+function ExitCard({ snap, fresh }: { snap: Snapshot; fresh: boolean }) {
+  const { propose } = useNelta();
+  const router = useRouter();
+  const hedged = snap.shortBase > 0n || (snap.position?.ratioBps ?? 0) > 0;
+  return (
+    <Card>
+      <T v="h2">Exit</T>
+      <T v="caption" style={{ marginTop: space.xs }}>Each one is a single transaction. If Velocity can’t fill it, nothing changes.</T>
+      <Button label="Keep my SOL, close hedge" kind="secondary" disabled={!fresh || !hedged} onPress={() => propose(plans.exitKeepSol(snap))} />
+      <Button label="Release all, close hedge" kind="secondary" disabled={!fresh || snap.solLamports === 0n} onPress={() => propose(plans.exitReleaseAll(snap))} />
+      <Button label="Step-by-step recovery" kind="quiet" onPress={() => router.push("/recovery")} />
+    </Card>
+  );
+}
+
 export default function Home() {
   const { nelta, snap, readError, refresh, propose } = useNelta();
   const router = useRouter();
@@ -87,7 +140,7 @@ export default function Home() {
     return (
       <Screen refresh={refreshControl}>
         <Header />
-        {readError ? <Notice tone="failed" title="Couldn’t read Devnet" body={`${readError}. Pull down to try again.`} /> : <T v="caption">Reading your position from Devnet…</T>}
+        {readError ? <ErrorState title="Couldn’t read Devnet" body={`${readError}. Your funds aren’t affected.`} onRetry={() => void onPull()} retrying={pulling} /> : <Loading label="Reading your position from Devnet…" />}
       </Screen>
     );
 
@@ -106,14 +159,22 @@ export default function Home() {
   const needsCollateral = snap.collateralBase === 0n;
   const needsSol = snap.solLamports === 0n;
   const fresh = !!nelta?.oracleFresh(snap);
+  const liquidating = snap.venueStatus.liquidating;
+  const canAddRisk = fresh && !liquidating;
   const solValue = (Number(snap.solLamports) / 1e9) * snap.price;
 
-  const primary = needsCollateral || needsSol ? (
-    <Button label={needsCollateral ? "Add dUSDT collateral" : "Add SOL"} onPress={() => router.push("/funds")} />
+  const primary = needsCollateral ? (
+    snap.walletDusdt > 0 ? (
+      <Button label={`Add ${snap.walletDusdt.toFixed(2)} dUSDT collateral`} onPress={() => propose(plans.depositDusdt(snap))} />
+    ) : (
+      <Button label={`Get ${plans.TEST_DUSDT} test dUSDT collateral`} onPress={() => propose(plans.faucetCollateral(snap))} />
+    )
+  ) : needsSol ? (
+    <Button label="Add SOL" onPress={() => router.push("/funds")} />
   ) : !inSync ? (
-    <Button label="Sync hedge" icon="link" disabled={!fresh} onPress={() => propose(plans.syncHedge(snap))} />
+    <Button label="Sync hedge" icon="link" disabled={!canAddRisk} onPress={() => propose(plans.syncHedge(snap))} />
   ) : !ruleLive ? (
-    <Button label="Arm a rule" icon="zap" disabled={!fresh} onPress={() => router.push("/rule")} />
+    <Button label="Arm a rule" icon="zap" disabled={!canAddRisk} onPress={() => router.push("/rule")} />
   ) : (
     <Button label="Release now" kind="secondary" disabled={!fresh} onPress={() => router.push("/release")} />
   );
@@ -123,6 +184,11 @@ export default function Home() {
       <Header />
       {readError && <Notice tone="waiting" title="Showing the last reading" body="Devnet is slow to answer. Pull down to refresh." />}
       {!fresh && <StalePriceNotice ageSecs={snap.oracleAgeSecs} />}
+      {liquidating ? (
+        <Notice tone="failed" title="Needs attention: Velocity is liquidating your short" body="Collateral got too thin for the short. Nelta won’t add risk until it’s over. You can still release SOL or use Recovery." />
+      ) : snap.venueStatus.liquidations > 0 && !inSync && snap.shortBase < snap.targetShort ? (
+        <Notice tone="drift" title="Needs attention: short below target" body={`Adding SOL does this, but Velocity has also liquidated this account before (${snap.venueStatus.liquidations}×). Check your margin below before you sync, or exit.`} />
+      ) : null}
 
       <T v="label" style={{ marginTop: space.md }}>SOL in custody</T>
       <T v="hero">{sol(snap.solLamports)} SOL</T>
@@ -138,6 +204,7 @@ export default function Home() {
           inSync={inSync}
           ratioPct={pos.ratioBps / 100}
         />
+        {snap.shortBase > 0n && <MarginLine snap={snap} />}
         {!inSync && !needsCollateral && (
           <T v="caption" style={{ marginTop: space.md, color: tone.drift.fg }}>
             Your short doesn’t match the SOL Nelta holds. Sync it so a release can shrink both together.
@@ -145,22 +212,7 @@ export default function Home() {
         )}
       </Card>
 
-      {(needsCollateral || needsSol) && (
-        <Card>
-          <T v="h2">Finish setup</T>
-          {[
-            { done: true, label: "Position created" },
-            { done: !needsCollateral, label: "Add dUSDT collateral for the short" },
-            { done: !needsSol, label: "Add SOL to custody" },
-            { done: inSync && !needsSol, label: "Sync the hedge" },
-          ].map((s) => (
-            <View key={s.label} style={hs.check}>
-              <Icon name={s.done ? "check" : "clock"} size={18} tint={s.done ? tone.sync.fg : color.textMuted} />
-              <T v="body" style={s.done ? { color: color.textMuted } : null}>{s.label}</T>
-            </View>
-          ))}
-        </Card>
-      )}
+      {(needsCollateral || needsSol || (!inSync && snap.shortBase === 0n)) && <SetupSteps snap={snap} />}
 
       <Card tint={ruleLive ? tone.armed.bg : undefined}>
         <View style={hs.between}>
@@ -180,15 +232,19 @@ export default function Home() {
         <KeeperLine k={keeper} />
       </Card>
 
-      {!needsCollateral && <RatioCard snap={snap} fresh={fresh} />}
+      {!needsCollateral && <RatioCard snap={snap} fresh={canAddRisk} />}
+      {(snap.shortBase > 0n || snap.solLamports > 0n) && <ExitCard snap={snap} fresh={fresh} />}
 
       <Card>
-        <Row label="Released to your wallet" value={`${snap.ownerWsol.toFixed(4)} wSOL`} />
+        {snap.ownerWsol > 0 && <Row label="Wrapped SOL from rules, in your wallet" value={`${snap.ownerWsol.toFixed(4)} wSOL`} />}
         <Row label="Collateral" value={`${(Number(snap.collateralBase) / 1e6).toFixed(2)} dUSDT`} />
         <View style={hs.actions}>
           <View style={{ flex: 1 }}><Button label="Release" kind="secondary" disabled={needsSol || !fresh} onPress={() => router.push("/release")} /></View>
           <View style={{ flex: 1 }}><Button label="Add funds" kind="secondary" onPress={() => router.push("/funds")} /></View>
         </View>
+        {snap.shortBase === 0n && snap.solLamports === 0n && snap.collateralBase > 0n && (
+          <Button label="Withdraw dUSDT collateral" kind="quiet" onPress={() => router.push("/recovery")} />
+        )}
       </Card>
     </Screen>
   );
@@ -200,4 +256,5 @@ const hs = StyleSheet.create({
   check: { flexDirection: "row", gap: space.md, alignItems: "center", minHeight: 36 },
   between: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   actions: { flexDirection: "row", gap: space.md },
+  margin: { marginTop: space.md, padding: space.md, borderRadius: 10, gap: 2 },
 });

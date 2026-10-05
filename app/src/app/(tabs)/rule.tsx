@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View } from "react-native";
 import { sol, until, usd } from "../../format";
+import { PositionGate } from "../../gate";
 import { Header } from "../../header";
 import { LAMPORTS } from "../../nelta";
 import * as plans from "../../plans";
@@ -29,7 +30,7 @@ export default function Rule() {
     return (
       <Screen>
         <Header />
-        <T v="body" style={{ color: color.textMuted }}>Create your position on Home first.</T>
+        <PositionGate snap={snap} />
       </Screen>
     );
 

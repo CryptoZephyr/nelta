@@ -4,11 +4,12 @@ import { Icon } from "../icons";
 import * as plans from "../plans";
 import { useNelta } from "../store";
 import { color, space, tone } from "../theme";
+import { PositionGate } from "../gate";
 import { Button, Card, Notice, Screen, T } from "../ui";
 
 export default function Recovery() {
   const { snap, propose } = useNelta();
-  if (!snap?.position) return <Screen><T v="body">There’s no position to recover.</T></Screen>;
+  if (!snap?.position) return <Screen><PositionGate snap={snap} /></Screen>;
 
   const ratio = snap.position.ratioBps;
   const steps = [

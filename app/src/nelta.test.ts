@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { decodePosition, InvalidVenueState, parseOracle, readOrderStep, readShort, readSpot, targetShort, VELOCITY_LAYOUT } from "./nelta";
+import { decodePosition, InvalidVenueState, margin, parseOracle, readOrderStep, readPerpQuote, readShort, readSpot, readVenueStatus, targetShort, VELOCITY_LAYOUT } from "./nelta";
 
 // Same Devnet account snapshots and SDK-decoded values the Rust decoder tests use.
 const FIXTURES = join(__dirname, "../../programs/nelta/fixtures");
@@ -59,4 +59,33 @@ test("targetShort floors to the order step like the program", () => {
   assert.equal(targetShort(100_000_000n, 5_000, 100_000n), 50_000_000n);
   assert.equal(targetShort(60_000_000n, 5_000, 100_000n), 30_000_000n);
   assert.equal(targetShort(123_456_789n, 5_000, 100_000n), 61_700_000n);
+});
+
+// Values below were read from the same fixtures with the SDK's Velocity IDL (BorshAccountsCoder).
+test("margin readers match the Velocity IDL on Devnet fixtures", () => {
+  const user = bin("user.bin");
+  assert.equal(readPerpQuote(user), 6_079_463n);
+  assert.deepEqual(readVenueStatus(user), { liquidating: false, liquidations: 0 });
+  assert.equal(bin("sol_perp_market.bin").readUInt32LE(620), 500);
+  assert.equal(bin("sol_spot_market.bin").readUInt32LE(660), 9_000);
+
+  const liquidating = Buffer.from(user);
+  liquidating[4468] = 1;
+  liquidating.writeUInt16LE(3, 4464);
+  assert.deepEqual(readVenueStatus(liquidating), { liquidating: true, liquidations: 2 });
+});
+
+test("margin: a 50% hedge backed by its own SOL can't be liquidated by price alone", () => {
+  const m = margin({ collateralUsd: 50, sol: 0.1, shortSol: 0.05, quoteUsd: 6, price: 120, maintMargin: 0.05, solWeight: 0.9 });
+  assert.equal(m.liquidationPrice, null);
+  assert.ok(Math.abs(m.equityUsd - (50 + 10.8 + 6 - 6)) < 1e-9);
+  assert.ok(Math.abs(m.requiredUsd - 0.3) < 1e-9);
+});
+
+test("margin: a 100% hedge has a liquidation price where equity meets the requirement", () => {
+  const i = { collateralUsd: 10, sol: 0.1, shortSol: 0.1, quoteUsd: 12, price: 120, maintMargin: 0.05, solWeight: 0.9 };
+  const p = margin(i).liquidationPrice!;
+  const at = margin({ ...i, price: p });
+  assert.ok(Math.abs(at.equityUsd - at.requiredUsd) < 1e-9);
+  assert.ok(p > 120);
 });

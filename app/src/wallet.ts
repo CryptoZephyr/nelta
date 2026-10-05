@@ -1,4 +1,4 @@
-import { SolanaMobileWalletAdapterProtocolErrorCode } from "@solana-mobile/mobile-wallet-adapter-protocol";
+import { SolanaMobileWalletAdapterProtocolErrorCode, SolanaSignTransactions } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { transact, Web3MobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-web3js";
 import { PublicKey, Transaction } from "@solana/web3.js";
 
@@ -25,6 +25,18 @@ async function authorize(wallet: Web3MobileWallet): Promise<PublicKey> {
   return new PublicKey(Buffer.from(auth.accounts[0].address, "base64"));
 }
 
+/** If the wallet refuses the cached token at signing time, nothing was signed: authorize afresh once and ask again. */
+async function withFreshAuth<R>(wallet: Web3MobileWallet, sign: (owner: PublicKey) => Promise<R>): Promise<R> {
+  const owner = await authorize(wallet);
+  try {
+    return await sign(owner);
+  } catch (e) {
+    if (!isAuthorizationFailure(e)) throw e;
+    authToken = undefined;
+    return await sign(await authorize(wallet));
+  }
+}
+
 export async function connect(): Promise<PublicKey> {
   return await transact(authorize);
 }
@@ -36,8 +48,28 @@ export function disconnect(): void {
 /** One wallet approval; the wallet signs and submits. */
 export async function signAndSend(build: (owner: PublicKey) => Promise<Transaction>, options: { skipPreflight?: boolean } = {}): Promise<string> {
   return await transact(async (wallet) => {
-    const owner = await authorize(wallet);
-    const [sig] = await wallet.signAndSendTransactions({ ...options, transactions: [await build(owner)] });
-    return sig;
+    return await withFreshAuth(wallet, async (owner) => {
+      const [sig] = await wallet.signAndSendTransactions({ ...options, transactions: [await build(owner)] });
+      return sig;
+    });
+  });
+}
+
+/**
+ * For fills: asks the wallet to sign only, so Nelta can send the moment Velocity can fill. Wallets without
+ * sign-only fall back to sign-and-send.
+ */
+export async function signForFill(build: (owner: PublicKey) => Promise<Transaction>): Promise<{ signed: Transaction } | { sig: string }> {
+  return await transact(async (wallet) => {
+    const caps = await wallet.getCapabilities().catch(() => null);
+    return await withFreshAuth(wallet, async (owner): Promise<{ signed: Transaction } | { sig: string }> => {
+      const tx = await build(owner);
+      if (caps?.features?.includes(SolanaSignTransactions)) {
+        const [signed] = await wallet.signTransactions({ transactions: [tx] });
+        return { signed };
+      }
+      const [sig] = await wallet.signAndSendTransactions({ skipPreflight: true, transactions: [tx] });
+      return { sig };
+    });
   });
 }

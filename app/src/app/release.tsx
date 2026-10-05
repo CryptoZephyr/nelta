@@ -4,13 +4,14 @@ import { sol, toLamports } from "../format";
 import * as plans from "../plans";
 import { useNelta } from "../store";
 import { color, space } from "../theme";
+import { PositionGate } from "../gate";
 import { Button, Card, Field, Notice, Row, Screen, Segmented, StalePriceNotice, T } from "../ui";
 
 export default function Release() {
   const { nelta, snap, propose } = useNelta();
   const [amount, setAmount] = useState("0.04");
   const pos = snap?.position;
-  if (!snap || !pos) return <Screen><T v="body">Create your position on Home first.</T></Screen>;
+  if (!snap || !pos) return <Screen><PositionGate snap={snap} /></Screen>;
 
   const inSync = snap.shortBase === snap.targetShort;
   const fresh = !!nelta?.oracleFresh(snap);

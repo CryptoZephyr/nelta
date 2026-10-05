@@ -176,6 +176,24 @@ export function Notice({ tone, title, body, icon }: { tone: Tone; title: string;
   );
 }
 
+export function Loading({ label }: { label: string }) {
+  return (
+    <View style={s.state} accessibilityRole="progressbar" accessibilityLabel={label}>
+      <ActivityIndicator color={color.brand} />
+      <T v="caption">{label}</T>
+    </View>
+  );
+}
+
+export function ErrorState({ title, body, onRetry, retrying }: { title: string; body: string; onRetry: () => void; retrying?: boolean }) {
+  return (
+    <View>
+      <Notice tone="failed" title={title} body={body} />
+      <Button label={retrying ? "Trying again…" : "Try again"} kind="secondary" loading={retrying} onPress={onRetry} />
+    </View>
+  );
+}
+
 export function StalePriceNotice({ ageSecs }: { ageSecs: number }) {
   const why = ageSecs < 0 ? "Velocity’s price feed shows a time in the future, so it can’t be trusted yet." : `Velocity’s price feed hasn’t updated for ${age(ageSecs)}.`;
   return <Notice tone="drift" icon="clock" title="Needs attention" body={`${why} Hedge changes and rules wait until it’s fresh. Your SOL is safe and nothing will move.`} />;
@@ -209,6 +227,7 @@ export const s = StyleSheet.create({
   bridge: { height: 40, justifyContent: "center", paddingLeft: space.md },
   bridgeLine: { position: "absolute", left: 18, top: 0, bottom: 0, width: 2, opacity: 0.35 },
   bridgeTag: { flexDirection: "row", gap: 6, alignItems: "center", alignSelf: "flex-start", borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 4, marginLeft: space.xl },
+  state: { flexDirection: "row", alignItems: "center", gap: space.md, paddingVertical: space.xl, justifyContent: "center" },
   notice: { flexDirection: "row", gap: space.md, padding: space.md, borderRadius: radius.control, marginTop: space.md, alignItems: "flex-start" },
   noticeTitle: { fontFamily: font.semibold, fontSize: 15, lineHeight: 22 },
 });
