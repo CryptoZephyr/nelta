@@ -106,7 +106,7 @@ const CONNECT_TIMEOUT_MS = 20_000;
 const WALLET_SILENT: ConnectIssue = {
   tone: "drift",
   title: "Your wallet didn’t answer",
-  body: "Phantom stays silent when it isn’t on Devnet. In Phantom: Settings → Developer settings → Testnet mode on, network Solana Devnet. Then tap Connect again.",
+  body: "Phantom stays silent when it isn’t on Devnet. In Phantom: Settings → Developer settings → Testnet mode on, network Solana Devnet. Also turn off Power saving, which can pause the wallet. Then tap Connect again.",
 };
 
 function connectIssue(e: unknown): ConnectIssue {
