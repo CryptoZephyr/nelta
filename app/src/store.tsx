@@ -11,6 +11,7 @@ const FILL_TRIES = 10;
 const FILL_ERROR = /0x1891|6289|SuccessCondition/i;
 const EXPIRY_MARGIN_BLOCKS = 20;
 const VENUE_WAIT_MS = 180_000;
+const PROBE_FAILURES = 5;
 
 export interface Change {
   label: string;
@@ -309,14 +310,20 @@ async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: numbe
  */
 async function waitUntilFillable(n: Nelta, plan: Plan): Promise<void> {
   const deadline = Date.now() + VENUE_WAIT_MS;
+  let failures = 0;
   while (Date.now() < deadline) {
     await nextOracleUpdate();
-    const ixs = await plan.ixs(n).catch(() => null);
-    if (!ixs) continue;
-    const { blockhash } = await connection.getLatestBlockhash("confirmed");
-    const probe = new VersionedTransaction(n.tx(ixs, blockhash).compileMessage());
-    const sim = await connection.simulateTransaction(probe, { sigVerify: false, replaceRecentBlockhash: true, commitment: "processed" }).catch(() => null);
-    if (!sim) continue;
+    let sim;
+    try {
+      const ixs = await plan.ixs(n);
+      const { blockhash } = await connection.getLatestBlockhash("confirmed");
+      const probe = new VersionedTransaction(n.tx(ixs, blockhash).compileMessage());
+      sim = await connection.simulateTransaction(probe, { sigVerify: false, replaceRecentBlockhash: true, commitment: "processed" });
+      failures = 0;
+    } catch (e) {
+      if (++failures >= PROBE_FAILURES) throw e;
+      continue;
+    }
     const err = sim.value.err ? JSON.stringify(sim.value.err) : null;
     if (!err) return;
     if (!FILL_ERROR.test(err)) throw new Error(err);
