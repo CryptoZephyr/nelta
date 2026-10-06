@@ -10,6 +10,7 @@ export const connection = new Connection(RPC, "confirmed");
 const FILL_TRIES = 10;
 const FILL_ERROR = /0x1891|6289|SuccessCondition/i;
 const EXPIRY_MARGIN_BLOCKS = 20;
+const VENUE_WAIT_MS = 180_000;
 
 export interface Change {
   label: string;
@@ -30,6 +31,7 @@ export interface Plan {
 export type Phase =
   | { kind: "preview" }
   | { kind: "wallet"; why: string }
+  | { kind: "venue"; attempt: number }
   | { kind: "confirming"; sig?: string }
   | { kind: "filling"; attempt: number; max: number; set: number; sets: number }
   | { kind: "done"; sig: string }
@@ -302,16 +304,39 @@ async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: numbe
 }
 
 /**
+ * Before asking for an approval, waits until an unsigned copy of the try would fill right after a price update, so
+ * the user isn't asked to approve tries Velocity can't fill yet. Throws NoFill if no such moment comes in time.
+ */
+async function waitUntilFillable(n: Nelta, plan: Plan): Promise<void> {
+  const deadline = Date.now() + VENUE_WAIT_MS;
+  while (Date.now() < deadline) {
+    await nextOracleUpdate();
+    const ixs = await plan.ixs(n).catch(() => null);
+    if (!ixs) continue;
+    const { blockhash } = await connection.getLatestBlockhash("confirmed");
+    const probe = new VersionedTransaction(n.tx(ixs, blockhash).compileMessage());
+    const sim = await connection.simulateTransaction(probe, { sigVerify: false, replaceRecentBlockhash: true, commitment: "processed" }).catch(() => null);
+    if (!sim) continue;
+    const err = sim.value.err ? JSON.stringify(sim.value.err) : null;
+    if (!err) return;
+    if (!FILL_ERROR.test(err)) throw new Error(err);
+  }
+  throw new NoFill("Velocity couldn’t fill while we waited");
+}
+
+/**
  * One wallet approval per try. Each try is settled (landed, or its blockhash expired) before the next is signed, so
  * two tries can never both succeed.
  */
 async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void): Promise<string> {
   for (let attempt = 1; attempt <= FILL_TRIES; attempt++) {
+    set({ kind: "venue", attempt });
+    await waitUntilFillable(n, plan);
     set({
       kind: "wallet",
       why: attempt === 1
-        ? "Approve in your wallet. Your wallet may warn it could fail: if Velocity can’t fill it, it changes nothing."
-        : `Try ${attempt - 1} didn’t fill, and nothing changed. Approve another try.`,
+        ? "Velocity can fill it now. Approve in your wallet. If it still doesn’t fill, it changes nothing."
+        : `Try ${attempt - 1} just missed, and nothing changed. Velocity can fill again now: approve one more try.`,
     });
     const ixs = await plan.ixs(n);
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");

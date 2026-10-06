@@ -62,7 +62,7 @@ export const syncHedge = (snap: Snapshot): Plan => ({
   title: "Sync hedge",
   summary: "Moves the SOL-PERP short to its target so it matches the SOL Nelta holds.",
   changes: [{ label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: `${sol(snap.targetShort)} SOL` }],
-  notes: ["Velocity has to fill the whole order at once. If it can’t, nothing changes and Nelta tries again on the next price update."],
+  notes: ["Velocity has to fill the whole order at once. Nelta waits until it can before opening your wallet. If a try still misses, nothing changes."],
   fill: true,
   ixs: (n) => n.rebalanceIxs(),
 });

@@ -22,17 +22,19 @@ function ChangeRow({ c }: { c: Change }) {
 const LOW_FEE_LAMPORTS = 10_000_000;
 const MIN_FEE_LAMPORTS = 10_000;
 
-const STEPS = ["Approve in wallet", "Waiting for a fill", "Confirmed on Devnet"];
+const STEPS = ["Waiting for Velocity", "Approve in wallet", "Waiting for a fill", "Confirmed on Devnet"];
 
-function stepIndex(p: Phase): number {
-  if (p.kind === "wallet") return 0;
-  if (p.kind === "filling" || p.kind === "confirming") return 1;
-  return 2;
+function stepIndex(p: Phase, fill?: boolean): number {
+  const offset = fill ? 1 : 0;
+  if (p.kind === "venue") return 0;
+  if (p.kind === "wallet") return offset;
+  if (p.kind === "filling" || p.kind === "confirming") return offset + 1;
+  return offset + 2;
 }
 
 function Progress({ phase, fill }: { phase: Phase; fill?: boolean }) {
-  const steps = fill ? STEPS : [STEPS[0], "Confirming", STEPS[2]];
-  const at = stepIndex(phase);
+  const steps = fill ? STEPS : [STEPS[1], "Confirming", STEPS[3]];
+  const at = stepIndex(phase, fill);
   return (
     <View style={{ marginTop: space.lg, gap: space.md }}>
       {steps.map((label, i) => (
@@ -43,6 +45,14 @@ function Progress({ phase, fill }: { phase: Phase; fill?: boolean }) {
           <T v={i === at ? "h2" : "body"} style={i > at ? { color: color.textMuted } : null}>{label}</T>
         </View>
       ))}
+      {phase.kind === "venue" && (
+        <Notice
+          tone="waiting"
+          icon="clock"
+          title="Waiting for Velocity"
+          body="Velocity’s test market can’t take this order right now. Nelta checks after every price update and opens your wallet only once it can fill. You don’t need to do anything; this can take a minute or two."
+        />
+      )}
       {phase.kind === "wallet" && <T v="caption">{phase.why}</T>}
       {phase.kind === "filling" && (
         <Notice
@@ -62,7 +72,7 @@ export function FlowSheet() {
   const insets = useSafeAreaInsets();
   if (!flow) return null;
   const { plan, phase } = flow;
-  const busy = phase.kind === "wallet" || phase.kind === "confirming" || phase.kind === "filling";
+  const busy = phase.kind === "venue" || phase.kind === "wallet" || phase.kind === "confirming" || phase.kind === "filling";
   const lowFee = snap !== null && snap.walletLamports < LOW_FEE_LAMPORTS;
   const noFee = snap !== null && snap.walletLamports < MIN_FEE_LAMPORTS;
   return (
