@@ -232,8 +232,8 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       let sig: string;
       if (!plan.fill) {
         set({ kind: "wallet", why: "Approve one transaction in your wallet." });
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-        sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash));
+        const { context, value: { blockhash, lastValidBlockHeight } } = await connection.getLatestBlockhashAndContext("confirmed");
+        sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash), { minContextSlot: context.slot });
         sent = true;
         set({ kind: "confirming", sig });
         const err = await settle(sig, lastValidBlockHeight);
@@ -346,8 +346,8 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
         : `Try ${attempt - 1} just missed, and nothing changed. Velocity can fill again now: approve one more try.`,
     });
     const ixs = await plan.ixs(n);
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-    const signed = await signForFill(async () => n.tx(ixs, blockhash));
+    const { context, value: { blockhash, lastValidBlockHeight } } = await connection.getLatestBlockhashAndContext("confirmed");
+    const signed = await signForFill(async () => n.tx(ixs, blockhash), context.slot);
     set({ kind: "filling", attempt, max: FILL_TRIES, set: attempt, sets: FILL_TRIES });
     const sig = "sig" in signed ? signed.sig : await sendWhenFillable(signed.signed, lastValidBlockHeight, () => setSent(true));
     if (sig === null) continue;
