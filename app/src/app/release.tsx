@@ -18,7 +18,7 @@ export default function Release() {
   const lamports = toLamports(amount);
   const error = !amount ? null : !lamports ? "Enter an amount above 0." : lamports > snap.solLamports ? `Nelta holds ${sol(snap.solLamports)} SOL.` : null;
   const outcome = lamports && !error ? plans.releaseOutcome(snap, pos.ratioBps, lamports) : null;
-  const pick = (f: number) => setAmount(sol((snap.solLamports * BigInt(f)) / 100n));
+  const pick = (f: number) => setAmount(sol((snap.solLamports * BigInt(f)) / 100n, 9));
 
   return (
     <Screen footer={<Button label="Review release" disabled={!outcome || !inSync || !fresh} onPress={() => lamports && propose(plans.release(snap, lamports))} />}>

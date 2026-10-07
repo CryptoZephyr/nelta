@@ -74,7 +74,8 @@ const WALLET_SILENT: ConnectIssue = {
 
 function connectIssue(e: unknown): ConnectIssue {
   const raw = e instanceof Error ? e.message : JSON.stringify(e);
-  if (/ERROR_WALLET_NOT_FOUND|no.*wallet.*found|not found/i.test(raw))
+  if ((e as { code?: unknown } | null)?.code === "ERROR_WALLET_NOT_FOUND" ||
+    /ERROR_WALLET_NOT_FOUND|found no installed wallet|no.*wallet.*found|not found/i.test(raw))
     return { tone: "waiting", title: "No Solana wallet found", body: "Install Phantom or Solflare, switch it to Devnet, then tap Connect again." };
   if (/cluster|chain/i.test(raw) && /support|mismatch|invalid|unknown/i.test(raw)) return WALLET_SILENT;
   const { title } = explain(e, false);
