@@ -49,3 +49,33 @@ test("confirmation has a wall-clock limit even when block height keeps respondin
   t.mock.method(Date, "now", () => { const value = now; now += 61_000; return value; });
   await assert.rejects(settle(rpc(null, 99), "sig", 100), /still unknown/);
 });
+
+test("a transient status failure is retried before showing an unknown outcome", async () => {
+  const c = rpc(null);
+  let calls = 0;
+  c.getSignatureStatuses = async () => {
+    if (++calls === 1) throw new Error("fetch failed");
+    return { context: { slot: 1 }, value: [{ slot: 1, confirmations: 1, err: null, confirmationStatus: "confirmed" }] };
+  };
+  assert.equal(await settle(c, "sig", 100), null);
+  assert.equal(calls, 2);
+});
+
+test("confirmation does not wait for a height RPC after a definitive status", async () => {
+  const c = rpc({ slot: 1, confirmations: 1, err: null, confirmationStatus: "confirmed" });
+  c.getBlockHeight = async () => { assert.fail("height is unnecessary after confirmation"); };
+  assert.equal(await settle(c, "sig", 100), null);
+});
+
+test("a status RPC that never responds is bounded", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let now = 0;
+  t.mock.method(Date, "now", () => now);
+  const c = rpc(null);
+  c.getSignatureStatuses = async () => new Promise(() => {});
+  const result = settle(c, "sig", 100);
+  const rejected = assert.rejects(result, /couldn’t check/);
+  now = 60_001;
+  t.mock.timers.tick(60_001);
+  await rejected;
+});
