@@ -1,4 +1,4 @@
-import { Connection, PublicKey, Transaction, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
+import { Connection, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
 import { SolanaMobileWalletAdapterProtocolErrorCode } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Nelta, RPC, Snapshot, SOL_ORACLE } from "./nelta";
@@ -6,11 +6,10 @@ import idl from "./nelta.json";
 import { Tone } from "./theme";
 import { connect, disconnect, signAndSend, signForFill } from "./wallet";
 import { settle } from "./confirmation";
+import { FILL_ERROR, sendWhenFillable } from "./fill";
 
 export const connection = new Connection(RPC, "confirmed");
 const FILL_TRIES = 10;
-const FILL_ERROR = /0x1891|6289|SuccessCondition/i;
-const EXPIRY_MARGIN_BLOCKS = 20;
 const VENUE_WAIT_MS = 180_000;
 const PROBE_FAILURES = 5;
 
@@ -265,26 +264,6 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Holds a signed try until a simulation right after a price update says Velocity can fill it, then sends it. The
- * fill only works within a few slots of a price update, which is shorter than a wallet approval takes.
- * Returns null if the blockhash ran out first; the try was never sent, so it can never land.
- */
-async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: number, onBroadcast: () => void): Promise<string | null> {
-  const raw = signed.serialize();
-  const versioned = VersionedTransaction.deserialize(raw);
-  while ((await connection.getBlockHeight("confirmed")) < lastValidBlockHeight - EXPIRY_MARGIN_BLOCKS) {
-    await nextOracleUpdate();
-    const sim = await connection.simulateTransaction(versioned, { sigVerify: false, commitment: "processed" });
-    const err = sim.value.err ? JSON.stringify(sim.value.err) : null;
-    if (err && FILL_ERROR.test(err)) continue;
-    if (err) throw new Error(err);
-    onBroadcast();
-    return await connection.sendRawTransaction(raw, { skipPreflight: true });
-  }
-  return null;
-}
-
-/**
  * Before asking for an approval, waits until an unsigned copy of the try would fill right after a price update, so
  * the user isn't asked to approve tries Velocity can't fill yet. Throws NoFill if no such moment comes in time.
  */
@@ -329,7 +308,7 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
     const { context, value: { blockhash, lastValidBlockHeight } } = await connection.getLatestBlockhashAndContext("confirmed");
     const signed = await signForFill(async () => n.tx(ixs, blockhash), context.slot, setSent);
     set({ kind: "filling", attempt, max: FILL_TRIES, set: attempt, sets: FILL_TRIES });
-    const sig = "sig" in signed ? signed.sig : await sendWhenFillable(signed.signed, lastValidBlockHeight, () => setSent(true));
+    const sig = "sig" in signed ? signed.sig : await sendWhenFillable(connection, signed.signed, lastValidBlockHeight, nextOracleUpdate, () => setSent(true));
     if (sig === null) continue;
     setSent(true);
     const err = await settle(connection, sig, lastValidBlockHeight);
