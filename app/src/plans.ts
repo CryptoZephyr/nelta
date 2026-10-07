@@ -148,7 +148,7 @@ export const revokeRule = (): Plan => ({
 
 export const closeHedge = (snap: Snapshot): Plan => withRuleOff(snap, {
   title: "Step 1 · Close the hedge",
-  summary: "Sets the hedge to 0% and places an order that can only shrink the short. Velocity’s background traders fill it, usually within a minute.",
+  summary: "Turns off any armed rule and sets the hedge to 0%. If a short is open, places an order that can only shrink it. Wait for the short to reach zero before withdrawing.",
   changes: [
     { label: "Hedge ratio", from: `${(snap.position?.ratioBps ?? 0) / 100}%`, to: "0%" },
     { label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: "0 SOL after the fill" },
