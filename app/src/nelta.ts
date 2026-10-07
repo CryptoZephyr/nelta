@@ -274,7 +274,7 @@ export class Nelta {
       targetShort: position ? targetShort(solLamports, position.ratioBps, step) : 0n,
       step,
       price,
-      oracleAgeSecs: Math.floor(Date.now() / 1000) - o.publishTs,
+      get oracleAgeSecs() { return Math.floor(Date.now() / 1000) - o.publishTs; },
       walletLamports,
       walletDusdt: walletDusdt / 1e6,
       collateralBase,

@@ -180,7 +180,9 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       setReadError(null);
     } catch (e) {
       if ((e as Error).name === "InvalidVenueState") setSnap(null);
-      setReadError((e as Error).message);
+      setReadError((e as Error).name === "InvalidVenueState"
+        ? "Velocity returned an unexpected position. Nelta can’t safely continue; try again"
+        : "Devnet is unavailable. Check your connection and try again");
     }
   }, [nelta]);
 

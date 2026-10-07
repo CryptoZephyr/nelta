@@ -5,10 +5,12 @@ import * as plans from "../plans";
 import { useNelta } from "../store";
 import { color, space } from "../theme";
 import { PositionGate } from "../gate";
+import { useNow } from "../now";
 import { Button, Card, Field, Notice, Row, Screen, Segmented, StalePriceNotice, T } from "../ui";
 
 export default function Release() {
   const { nelta, snap, propose } = useNelta();
+  useNow();
   const [amount, setAmount] = useState("0.04");
   const pos = snap?.position;
   if (!snap || !pos) return <Screen><PositionGate snap={snap} /></Screen>;
