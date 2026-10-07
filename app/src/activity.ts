@@ -1,4 +1,4 @@
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection, PublicKey, VersionedMessage } from "@solana/web3.js";
 import idl from "./nelta.json";
 
 export interface Activity {
@@ -10,32 +10,31 @@ export interface Activity {
 }
 
 const NAMES: Record<string, string> = {
-  Initialize: "Position created",
-  Deposit: "Deposit",
-  Rebalance: "Hedge synced",
-  ReduceHedge: "Close-hedge order placed",
-  Release: "Released with hedge",
-  WithdrawCollateral: "Collateral withdrawn",
-  SetRule: "Rule armed",
-  RevokeRule: "Rule revoked",
-  ExecuteRule: "Rule ran",
-  SetRatio: "Hedge ratio changed",
+  initialize: "Position created",
+  deposit: "Deposit",
+  rebalance: "Hedge synced",
+  reduce_hedge: "Close-hedge order placed",
+  release: "Released with hedge",
+  withdraw_collateral: "Collateral withdrawn",
+  set_rule: "Rule armed",
+  revoke_rule: "Rule revoked",
+  execute_rule: "Rule ran",
+  set_ratio: "Hedge ratio changed",
 };
 
 const PROGRAM = idl.address;
 
-function describe(logs: string[]): string {
+export function describeTransaction(message: VersionedMessage): string {
   const names: string[] = [];
-  let depth = 0;
-  for (const l of logs) {
-    if (l.startsWith(`Program ${PROGRAM} invoke`)) depth++;
-    else if (l.startsWith(`Program ${PROGRAM} success`) || l.startsWith(`Program ${PROGRAM} failed`)) depth--;
-    else if (depth > 0) {
-      const m = /^Program log: Instruction: (\w+)$/.exec(l);
-      if (m && NAMES[m[1]] && !names.includes(NAMES[m[1]])) names.push(NAMES[m[1]]);
-    }
+  for (const ix of message.compiledInstructions) {
+    if (message.staticAccountKeys[ix.programIdIndex]?.toBase58() !== PROGRAM) continue;
+    const instruction = idl.instructions.find((entry) =>
+      entry.discriminator.every((byte, i) => ix.data[i] === byte),
+    );
+    const name = instruction && NAMES[instruction.name];
+    if (name && !names.includes(name)) names.push(name);
   }
-  return names.join(" + ") || "Retry account setup";
+  return names.join(" + ") || "Account setup";
 }
 
 export async function activity(connection: Connection, position: PublicKey, owner: PublicKey): Promise<Activity[]> {
@@ -53,7 +52,7 @@ export async function activity(connection: Connection, position: PublicKey, owne
       ts: s.blockTime ?? null,
       ok: !s.err,
       by: payer && !payer.equals(owner) ? "keeper" : "you",
-      what: describe(tx?.meta?.logMessages ?? []),
+      what: tx ? describeTransaction(tx.transaction.message) : "Transaction details unavailable",
     };
   });
 }
