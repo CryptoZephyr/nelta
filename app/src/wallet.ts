@@ -1,14 +1,14 @@
 import { SolanaMobileWalletAdapterProtocolErrorCode, SolanaSignTransactions } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { transact, Web3MobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-web3js";
 import { PublicKey, Transaction } from "@solana/web3.js";
-import { submitToWallet } from "./submission";
+import { submitToWallet, walletErrorCode } from "./submission";
 
 const IDENTITY = { name: "Nelta", uri: "https://github.com/CryptoZephyr/nelta/", icon: "raw/main/app/assets/icon.png" };
 const CHAIN = "solana:devnet";
 let authToken: string | undefined;
 
 function isAuthorizationFailure(e: unknown): boolean {
-  return (e as { code?: unknown } | null)?.code === SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED;
+  return walletErrorCode(e) === SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED;
 }
 
 /** Reuses the cached token; if the wallet rejects it (expired or revoked), drops it and asks for a fresh authorization once. */
@@ -64,7 +64,8 @@ export async function signAndSend(build: (owner: PublicKey) => Promise<Transacti
  */
 export async function signForFill(build: (owner: PublicKey) => Promise<Transaction>, minContextSlot: number, setSent: (sent: boolean) => void): Promise<{ signed: Transaction } | { sig: string }> {
   return await transact(async (wallet) => {
-    const caps = await wallet.getCapabilities().catch(() => null);
+    const getCapabilities: (params: Record<string, never>) => ReturnType<Web3MobileWallet["getCapabilities"]> = wallet.getCapabilities;
+    const caps = await getCapabilities({}).catch(() => null);
     return await withFreshAuth(wallet, async (owner): Promise<{ signed: Transaction } | { sig: string }> => {
       const tx = await build(owner);
       if (caps?.features?.includes(SolanaSignTransactions)) {
