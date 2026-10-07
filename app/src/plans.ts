@@ -146,14 +146,14 @@ export const revokeRule = (): Plan => ({
   ixs: (n) => n.revokeRuleIxs(),
 });
 
-export const closeHedge = (snap: Snapshot): Plan => ({
+export const closeHedge = (snap: Snapshot): Plan => withRuleOff(snap, {
   title: "Step 1 · Close the hedge",
   summary: "Sets the hedge to 0% and places an order that can only shrink the short. Velocity’s background traders fill it, usually within a minute.",
   changes: [
     { label: "Hedge ratio", from: `${(snap.position?.ratioBps ?? 0) / 100}%`, to: "0%" },
     { label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: "0 SOL after the fill" },
   ],
-  ixs: async (n) => [...(await n.setRatioIxs(0)), ...(await n.reduceHedgeIxs(snap.shortBase))],
+  ixs: async (n) => [...(await n.setRatioIxs(0)), ...(snap.shortBase > 0n ? await n.reduceHedgeIxs(snap.shortBase) : [])],
 });
 
 export const withdrawSol = (snap: Snapshot): Plan => ({

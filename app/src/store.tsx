@@ -5,6 +5,7 @@ import { Nelta, RPC, Snapshot, SOL_ORACLE } from "./nelta";
 import idl from "./nelta.json";
 import { Tone } from "./theme";
 import { connect, disconnect, signAndSend, signForFill } from "./wallet";
+import { settle } from "./confirmation";
 
 export const connection = new Connection(RPC, "confirmed");
 const FILL_TRIES = 10;
@@ -127,7 +128,12 @@ function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> 
       body: sent ? "It may still land. Check Activity before trying again." : "Nothing was sent. Try again in a moment.",
       nothingChanged: !sent,
     };
-  return { kind: "failed", title: "Something went wrong", body: raw.slice(0, 180), nothingChanged: false };
+  return {
+    kind: "failed",
+    title: sent ? "Check the transaction result" : "Couldn’t prepare this transaction",
+    body: sent ? "It may still land. Check Activity before trying again." : "Nothing was sent. Check your connection and try again.",
+    nothingChanged: !sent,
+  };
 }
 
 interface Store {
@@ -233,10 +239,10 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       if (!plan.fill) {
         set({ kind: "wallet", why: "Approve one transaction in your wallet." });
         const { context, value: { blockhash, lastValidBlockHeight } } = await connection.getLatestBlockhashAndContext("confirmed");
-        sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash), { minContextSlot: context.slot });
+        sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash), { minContextSlot: context.slot }, (v) => { sent = v; });
         sent = true;
         set({ kind: "confirming", sig });
-        const err = await settle(sig, lastValidBlockHeight);
+        const err = await settle(connection, sig, lastValidBlockHeight);
         if (err === "expired") throw new Error("network: the transaction expired before it landed");
         if (err) throw new Error(err);
       } else {
@@ -259,31 +265,6 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Waits until a transaction landed or can no longer land. Returns null on success, the on-chain error as JSON,
- * or "expired" if it never landed. Polls over HTTP; websocket confirmations stall when mobile networks drop the socket.
- */
-const SILENT_RPC_MS = 60_000;
-
-async function settle(sig: string, lastValidBlockHeight: number): Promise<string | null> {
-  const status = async (history: boolean) =>
-    (await connection.getSignatureStatuses([sig], { searchTransactionHistory: history }).catch(() => null))?.value[0] ?? null;
-  let lastHeard = Date.now();
-  for (;;) {
-    const [st, height] = await Promise.all([status(false), connection.getBlockHeight("confirmed").catch(() => 0)]);
-    if (height > 0) lastHeard = Date.now();
-    else if (Date.now() - lastHeard > SILENT_RPC_MS) throw new Error("network: Devnet stopped answering while confirming");
-    if (st?.err) return JSON.stringify(st.err);
-    if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return null;
-    if (height > lastValidBlockHeight) {
-      const last = await status(true);
-      if (last?.err) return JSON.stringify(last.err);
-      return last?.confirmationStatus === "confirmed" || last?.confirmationStatus === "finalized" ? null : "expired";
-    }
-    await new Promise((r) => setTimeout(r, 1_000));
-  }
-}
-
-/**
  * Holds a signed try until a simulation right after a price update says Velocity can fill it, then sends it. The
  * fill only works within a few slots of a price update, which is shorter than a wallet approval takes.
  * Returns null if the blockhash ran out first; the try was never sent, so it can never land.
@@ -291,10 +272,9 @@ async function settle(sig: string, lastValidBlockHeight: number): Promise<string
 async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: number, onBroadcast: () => void): Promise<string | null> {
   const raw = signed.serialize();
   const versioned = VersionedTransaction.deserialize(raw);
-  while ((await connection.getBlockHeight("confirmed").catch(() => 0)) < lastValidBlockHeight - EXPIRY_MARGIN_BLOCKS) {
+  while ((await connection.getBlockHeight("confirmed")) < lastValidBlockHeight - EXPIRY_MARGIN_BLOCKS) {
     await nextOracleUpdate();
-    const sim = await connection.simulateTransaction(versioned, { sigVerify: false, commitment: "processed" }).catch(() => null);
-    if (!sim) continue;
+    const sim = await connection.simulateTransaction(versioned, { sigVerify: false, commitment: "processed" });
     const err = sim.value.err ? JSON.stringify(sim.value.err) : null;
     if (err && FILL_ERROR.test(err)) continue;
     if (err) throw new Error(err);
@@ -347,12 +327,12 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
     });
     const ixs = await plan.ixs(n);
     const { context, value: { blockhash, lastValidBlockHeight } } = await connection.getLatestBlockhashAndContext("confirmed");
-    const signed = await signForFill(async () => n.tx(ixs, blockhash), context.slot);
+    const signed = await signForFill(async () => n.tx(ixs, blockhash), context.slot, setSent);
     set({ kind: "filling", attempt, max: FILL_TRIES, set: attempt, sets: FILL_TRIES });
     const sig = "sig" in signed ? signed.sig : await sendWhenFillable(signed.signed, lastValidBlockHeight, () => setSent(true));
     if (sig === null) continue;
     setSent(true);
-    const err = await settle(sig, lastValidBlockHeight);
+    const err = await settle(connection, sig, lastValidBlockHeight);
     if (err === null) return sig;
     if (err !== "expired" && !FILL_ERROR.test(err)) throw new Error(err);
     setSent(false);

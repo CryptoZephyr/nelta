@@ -6,7 +6,8 @@ export const short = (s: string, n = 4) => `${s.slice(0, n)}…${s.slice(-n)}`;
 export const explorerTx = (sig: string) => `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
 export const toLamports = (s: string): bigint | null => {
   const n = Number(s);
-  return Number.isFinite(n) && n > 0 ? BigInt(Math.round(n * LAMPORTS)) : null;
+  const lamports = Math.round(n * LAMPORTS);
+  return Number.isSafeInteger(lamports) && lamports > 0 ? BigInt(lamports) : null;
 };
 
 export function ago(unixSecs: number): string {
