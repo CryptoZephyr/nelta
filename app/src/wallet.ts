@@ -1,13 +1,14 @@
 import { SolanaMobileWalletAdapterProtocolErrorCode, SolanaSignTransactions } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { transact, Web3MobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-web3js";
 import { PublicKey, Transaction } from "@solana/web3.js";
+import { submitToWallet, walletErrorCode } from "./submission";
 
 const IDENTITY = { name: "Nelta", uri: "https://github.com/CryptoZephyr/nelta/", icon: "raw/main/app/assets/icon.png" };
 const CHAIN = "solana:devnet";
 let authToken: string | undefined;
 
 function isAuthorizationFailure(e: unknown): boolean {
-  return (e as { code?: unknown } | null)?.code === SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED;
+  return walletErrorCode(e) === SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED;
 }
 
 /** Reuses the cached token; if the wallet rejects it (expired or revoked), drops it and asks for a fresh authorization once. */
@@ -46,10 +47,12 @@ export function disconnect(): void {
 }
 
 /** One wallet approval; the wallet signs and submits. */
-export async function signAndSend(build: (owner: PublicKey) => Promise<Transaction>, options: { skipPreflight?: boolean } = {}): Promise<string> {
+/** Phantom rejects sign-and-send requests without `minContextSlot` without showing an approve screen. */
+export async function signAndSend(build: (owner: PublicKey) => Promise<Transaction>, options: { minContextSlot: number; skipPreflight?: boolean }, setSent: (sent: boolean) => void): Promise<string> {
   return await transact(async (wallet) => {
     return await withFreshAuth(wallet, async (owner) => {
-      const [sig] = await wallet.signAndSendTransactions({ ...options, transactions: [await build(owner)] });
+      const transactions = [await build(owner)];
+      const [sig] = await submitToWallet(() => wallet.signAndSendTransactions({ ...options, transactions }), setSent);
       return sig;
     });
   });
@@ -59,16 +62,17 @@ export async function signAndSend(build: (owner: PublicKey) => Promise<Transacti
  * For fills: asks the wallet to sign only, so Nelta can send the moment Velocity can fill. Wallets without
  * sign-only fall back to sign-and-send.
  */
-export async function signForFill(build: (owner: PublicKey) => Promise<Transaction>): Promise<{ signed: Transaction } | { sig: string }> {
+export async function signForFill(build: (owner: PublicKey) => Promise<Transaction>, minContextSlot: number, setSent: (sent: boolean) => void): Promise<{ signed: Transaction } | { sig: string }> {
   return await transact(async (wallet) => {
-    const caps = await wallet.getCapabilities().catch(() => null);
+    const getCapabilities: (params: Record<string, never>) => ReturnType<Web3MobileWallet["getCapabilities"]> = wallet.getCapabilities;
+    const caps = await getCapabilities({}).catch(() => null);
     return await withFreshAuth(wallet, async (owner): Promise<{ signed: Transaction } | { sig: string }> => {
       const tx = await build(owner);
       if (caps?.features?.includes(SolanaSignTransactions)) {
         const [signed] = await wallet.signTransactions({ transactions: [tx] });
         return { signed };
       }
-      const [sig] = await wallet.signAndSendTransactions({ skipPreflight: true, transactions: [tx] });
+      const [sig] = await submitToWallet(() => wallet.signAndSendTransactions({ minContextSlot, skipPreflight: true, transactions: [tx] }), setSent);
       return { sig };
     });
   });

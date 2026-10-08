@@ -15,9 +15,9 @@ export default function Recovery() {
   const steps = [
     {
       title: "Close the hedge",
-      body: `Short is ${sol(snap.shortBase)} SOL. Places an order that can only shrink it; Velocity fills it, usually within a minute.`,
-      done: snap.shortBase === 0n && ratio === 0,
-      ready: snap.shortBase > 0n || ratio > 0,
+      body: `Short is ${sol(snap.shortBase)} SOL. Turns off any armed rule and sets the hedge to 0%. If a short is open, places an order that can only shrink it.`,
+      done: snap.shortBase === 0n && ratio === 0 && !snap.position.rule.active,
+      ready: snap.shortBase > 0n || ratio > 0 || snap.position.rule.active,
       plan: () => plans.closeHedge(snap),
     },
     {

@@ -62,7 +62,7 @@ export const syncHedge = (snap: Snapshot): Plan => ({
   title: "Sync hedge",
   summary: "Moves the SOL-PERP short to its target so it matches the SOL Nelta holds.",
   changes: [{ label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: `${sol(snap.targetShort)} SOL` }],
-  notes: ["Velocity has to fill the whole order at once. If it can’t, nothing changes and Nelta tries again on the next price update."],
+  notes: ["Velocity has to fill the whole order at once. Nelta waits until it can before opening your wallet. If a try still misses, nothing changes."],
   fill: true,
   ixs: (n) => n.rebalanceIxs(),
 });
@@ -146,14 +146,14 @@ export const revokeRule = (): Plan => ({
   ixs: (n) => n.revokeRuleIxs(),
 });
 
-export const closeHedge = (snap: Snapshot): Plan => ({
+export const closeHedge = (snap: Snapshot): Plan => withRuleOff(snap, {
   title: "Step 1 · Close the hedge",
-  summary: "Sets the hedge to 0% and places an order that can only shrink the short. Velocity’s background traders fill it, usually within a minute.",
+  summary: "Turns off any armed rule and sets the hedge to 0%. If a short is open, places an order that can only shrink it. Wait for the short to reach zero before withdrawing.",
   changes: [
     { label: "Hedge ratio", from: `${(snap.position?.ratioBps ?? 0) / 100}%`, to: "0%" },
     { label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: "0 SOL after the fill" },
   ],
-  ixs: async (n) => [...(await n.setRatioIxs(0)), ...(await n.reduceHedgeIxs(snap.shortBase))],
+  ixs: async (n) => [...(await n.setRatioIxs(0)), ...(snap.shortBase > 0n ? await n.reduceHedgeIxs(snap.shortBase) : [])],
 });
 
 export const withdrawSol = (snap: Snapshot): Plan => ({

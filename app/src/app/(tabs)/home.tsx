@@ -111,12 +111,12 @@ function MarginLine({ snap }: { snap: Snapshot }) {
 function ExitCard({ snap, fresh }: { snap: Snapshot; fresh: boolean }) {
   const { propose } = useNelta();
   const router = useRouter();
-  const hedged = snap.shortBase > 0n || (snap.position?.ratioBps ?? 0) > 0;
+  const canClose = snap.shortBase > 0n || (snap.position?.ratioBps ?? 0) > 0 || snap.position?.rule.active;
   return (
     <Card>
       <T v="h2">Exit</T>
       <T v="caption" style={{ marginTop: space.xs }}>Each one is a single transaction. If Velocity can’t fill it, nothing changes.</T>
-      <Button label="Keep my SOL, close hedge" kind="secondary" disabled={!fresh || !hedged} onPress={() => propose(plans.exitKeepSol(snap))} />
+      <Button label="Keep my SOL, close hedge" kind="secondary" disabled={!fresh || !canClose} onPress={() => propose(plans.exitKeepSol(snap))} />
       <Button label="Release all, close hedge" kind="secondary" disabled={!fresh || snap.solLamports === 0n} onPress={() => propose(plans.exitReleaseAll(snap))} />
       <Button label="Step-by-step recovery" kind="quiet" onPress={() => router.push("/recovery")} />
     </Card>

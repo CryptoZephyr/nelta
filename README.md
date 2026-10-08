@@ -23,11 +23,11 @@ To fix it, you have to remember to shrink the bet yourself, at the right size, e
 
 ## What Nelta does
 
-- **One position, two parts.** Your SOL and its hedge (the short) live together. Nelta only lets them change together.
+- **One position, two parts.** Your SOL and its hedge (the short) live in the same program-controlled Velocity account. Releases keep your chosen hedge ratio intact.
 - **Take SOL out in one step.** Release some SOL and the short shrinks by the matching amount in the same transaction. If either part can't happen, nothing happens.
-- **Set one rule, then put your phone away.** For example: "If SOL hits $210, take out 0.04 SOL." A keeper carries it out while your phone is off. It only works once, and you can cancel it any time.
+- **Set one rule, then put your phone away.** For example: "If SOL hits $210, take out 0.04 SOL." A keeper carries it out without the app running. It only works once, and you can cancel it any time.
 - **Leave in one tap.** "Keep my SOL, close the hedge" or "Release all, close the hedge". Either one also cancels an armed rule.
-- **See your safety margin.** Home shows how far SOL can move before Velocity would liquidate the short. If something is wrong, it says "Needs attention".
+- **See your safety margin.** Home estimates how far SOL can move before Velocity would liquidate the short. If something is wrong, it says "Needs attention".
 - **Your SOL only ever comes back to you.** No one else can receive it, not the keeper and not Nelta. You can close everything yourself, without the app.
 
 ## Words you'll see in the app
@@ -41,10 +41,12 @@ To fix it, you have to remember to shrink the bet yourself, at the right size, e
 | **dUSDT collateral** | A test stablecoin kept on Velocity as a safety deposit for the short. Nelta mints 100 test dUSDT for you in one tap. |
 | **Sync hedge** | Resize the short so it matches your SOL and chosen %, for example after adding SOL. |
 | **Release** | Take SOL out to your wallet. The short shrinks by the matching amount in the same step. |
-| **Fill / "Velocity didn't fill"** | The trade on Velocity has to go through completely. If it can't right now, nothing changes and you try again. |
+| **Fill / "Velocity didn't fill"** | The trade on Velocity has to go through completely. If it can't right now, your position stays unchanged. An unsuccessful transaction that reached Devnet can still cost a network fee. |
+| **Waiting for Velocity** | Nelta checks the market before opening your wallet. Once a check succeeds, it asks you to approve. The market can change before the approved trade reaches it. |
+| **Check before retrying** | Nelta doesn't yet know whether the transaction landed. Check Activity or the Explorer receipt before trying again. |
 | **Margin headroom** | How far SOL's price can rise before Velocity would force-close your short. More is safer. You can put in any amount of SOL, but the more SOL you hedge on the same dUSDT, the less headroom you have. For a big deposit, tap **Get 100 test dUSDT** a few more times. |
 | **Rule (Armed)** | One instruction you set ahead of time, like "if SOL hits $210, take out 0.04 SOL". It runs once, then switches off. |
-| **Keeper** | A small robot that watches the price and runs your rule while your phone is off. It can only send SOL to you. |
+| **Keeper** | A small robot that watches the price and runs your rule without the app running. It can only send SOL to you. |
 | **Needs attention** | Something changed outside Nelta (for example Velocity closed part of the short). Check Home, then sync or exit. |
 | **Recovery** | Three steps to take everything back yourself, even without the keeper. |
 
@@ -52,7 +54,7 @@ To fix it, you have to remember to shrink the bet yourself, at the right size, e
 
 1. Connect your wallet (Phantom, Solflare, any Mobile Wallet Adapter wallet) on Devnet.
 2. Tap **Get 100 test dUSDT** (collateral for the short, one approval), add SOL, and pick how much to hedge (25–100%).
-3. Nelta opens the matching SOL-PERP short on Velocity.
+3. Tap **Sync hedge**. Nelta waits for a fillable check, asks your wallet to approve, and tries to open the matching SOL-PERP short on Velocity. It shows an Explorer receipt when confirmed.
 4. Take SOL out yourself, or arm a one-use rule and let the keeper do it while you're away.
 
 ```mermaid
@@ -68,14 +70,26 @@ flowchart LR
 - **Program-owned custody:** the Velocity account belongs to a Nelta program address, not to a person. The rules in the program are the only way to move funds.
 - **Mobile Wallet Adapter:** every owner action is signed in your own wallet app on the phone. The keeper never holds your key.
 
-## Try it (about 2 minutes)
+## Try it on Android
 
 1. On an Android phone, download [nelta.apk](https://github.com/CryptoZephyr/nelta/releases/latest/download/nelta.apk) and install it. If Chrome stalls at 100%, use Samsung Internet or Firefox.
 2. In Phantom: **Settings → Developer settings → Testnet mode → Solana Devnet**. Turn off Android **Power saving**, and unlock Phantom before you approve.
 3. Get some free Devnet SOL from the [faucet](https://faucet.solana.com) (about 0.2 SOL is plenty).
 4. Open Nelta, tap **Connect wallet**, and follow the steps on Home: create position → get test dUSDT (Nelta mints it for you) → add SOL → sync hedge. Each step shows "Confirmed on Devnet" with an Explorer link.
+5. During Sync hedge, expect **Waiting for Velocity** before a wallet prompt. Devnet fills can take time, require several approvals or fail completely. If you see **Check before retrying**, check Activity first.
 
-No phone? Every step is recorded on Devnet with transaction links in [docs/devnet-evidence.md](docs/devnet-evidence.md).
+No phone? Earlier successful runs have transaction links in [docs/devnet-evidence.md](docs/devnet-evidence.md). The latest audit's results and limits are summarized below.
+
+## What's new in 1.3.1
+
+- **Wait before approving.** Nelta checks whether Velocity can fill before opening your wallet. A good check can still miss by the time you approve, so repeated approvals remain possible.
+- **Clearer wallet handling.** Declined approvals and expired connections are recognized correctly. A compatibility fix aimed at Phantom is included, but real Phantom and Solflare still need checking on a phone.
+- **Clearer transaction results.** Brief network failures are retried, confirmation has a time limit, and a lost send response leads to **Check before retrying**, because the transaction might already have landed.
+- **Recovery turns off armed rules.** Even with no short open, Recovery cancels an armed rule before calling that step done. Both named exits also cancel rules.
+- **Activity loads and names transactions correctly.** Entries identify deposits, rules, releases and keeper actions.
+- **Old prices stop looking fresh.** A cached price keeps aging during a network outage; unsafe release review is blocked.
+
+The latest audit did **not** complete the full hedge flow: Velocity rejected the hedge orders. The app fixes do not guarantee liquidity on its Devnet market. See [Evidence](#evidence) for what passed and what remains unproven.
 
 ## What's running
 
@@ -86,29 +100,52 @@ No phone? Every step is recorded on Devnet with transaction links in [docs/devne
 | Hosted keeper | GitHub Actions ([keeper.yml](.github/workflows/keeper.yml)), fee-payer `7kCrKbJ9hAjLFdY26HY5asutdJ4XYadZKajYbu1diqTx` |
 | Android app | [GitHub Releases](https://github.com/CryptoZephyr/nelta/releases/latest). The app shows an "Update" banner when a new version is out |
 
+There is **no separate API server or central database**. The app reads Solana directly through RPC, the program enforces custody and permissions, and GitHub Actions hosts the keeper.
+
 ## Evidence
 
-- **Full lifecycle in the app** (create, fund, hedge, arm rule, keeper run with the app closed, release, recovery), with every signature in [docs/devnet-evidence.md](docs/devnet-evidence.md).
-- **The hosted keeper fired a rule while the app was force-stopped** (GitHub Actions run 37160640617).
-- **16 forbidden actions rejected** on the live program, among them paying a stranger, non-owner signing, replaying a rule, a fake oracle and an expired rule.
-- **Tests:** 25 Rust tests (math and Velocity encoding), 8 app tests, plus CI for program, app and scripts on every PR.
-- **Connected and signed on a real Samsung phone with Phantom.**
-- **1.3.0 end-to-end on the emulator:** setup with test dUSDT, hedge sync, ratio change, rule, both exit buttons and collateral withdrawal, all confirmed on Devnet. The wallet declining, timing out, asking to reconnect or lacking SOL for fees each show a clear message.
+### Latest audit: 7–8 October 2026
+
+The fixes in 1.3.1 were exercised in signed test builds **test.13** and **test.15**, using an Android emulator and the Solana Mobile test wallet. These results are not proof that real Phantom or Solflare passed.
+
+- **Passed in test.13:** declined signatures, invalid payloads, expired-authorization recovery, waiting before approval, stale-price blocking and a keeper rule executed while the app was force-stopped. Setup and a user-entered **0.043211110 SOL** deposit were confirmed in earlier audit builds.
+- **Passed in test.15:** Recovery canceled an armed rule even with no short; Keep SOL, a partial release, Release All and collateral withdrawal each confirmed with one approval. Activity showed owner and keeper transactions and opened the keeper's finalized receipt.
+- **Important limit:** those test.15 exits had **zero short**. They do not prove closing or releasing an open hedge in this final run.
+- **Failed to fill:** the 25% hedge exhausted ten approvals. The 50%, 75% and 100% attempts also failed with Velocity's inventory/full-fill error. The latest audit therefore did **not** pass the full positive hedge lifecycle.
+- **Checks:** 32 app tests, typecheck and lint passed. CI covers the Rust program, app and scripts. Sixteen forbidden-action Devnet checks passed, mostly through simulation.
+- **Still untested:** real Phantom and Solflare on this version, a real liquidation, and exhaustive network-failure and transaction-interruption timings.
+
+See [the audited changes and build details](https://github.com/CryptoZephyr/nelta/pull/24). Selected final-audit receipts:
+
+| Action | Devnet receipt |
+| --- | --- |
+| Keeper executed with the app stopped | [Finalized transaction](https://explorer.solana.com/tx/5Ky2Vs9V8Nh4v6gcLswQbeyz3VgZBQDZDoE9JxEhoywJptSWLf2Epi54ABrRjaxQayL5HUrHbJYTdWJFd3KFF2h5?cluster=devnet) |
+| Recovery revoked the armed rule | [Transaction](https://explorer.solana.com/tx/3TekZidmcdakbd43NAsGj8mTStdtaerkQ7nY1Js8j9arzQSR9NU2jvyeRpTAG3etQ6hfJif9r8f1xyBvBwck8k4m?cluster=devnet) |
+| Keep SOL with zero short | [Transaction](https://explorer.solana.com/tx/3BDBA45Qugf6cciAEA2wjngkXm6U5iEvHsehTXpZUdqKANvfsQwwsWr9KTv7GVDwegUNEdFD9VFnwRd6C6YJ16hJ?cluster=devnet) |
+| Release All with zero short | [Transaction](https://explorer.solana.com/tx/HaoWUGLc6SYndYq7cuao9KUKnVyhJFspQkqk7chCrdmadfRuVHCfCZYTzJh2PNSg9ZB3eKyLH1UjvUG4bkoYHAf?cluster=devnet) |
+| Collateral withdrawal | [Transaction](https://explorer.solana.com/tx/3SEVfwqDfun1oagjyp7jR4UdqQ9RnLGipoGmGhZyqxnSRmtf4Qx1pfUnk75a1x8HErFXXKkAvyc2CF1Sm2duNGMY?cluster=devnet) |
+
+### Earlier proof
+
+Earlier builds completed the full lifecycle (create, fund, hedge, rule, keeper, release and recovery), with signatures in [docs/devnet-evidence.md](docs/devnet-evidence.md). Phantom also connected and signed on a real Samsung phone in an earlier version. Neither establishes that the newest wallet changes work on that phone.
 
 ## What we tested when things go wrong
 
 | Situation | What should happen | What happened |
 | --- | --- | --- |
-| Velocity can't fill right now | Nothing changes, you can try again | Every unfilled try reverted whole; only the fee was spent |
+| Velocity can't fill right now | Your position stays unchanged | Sent failures reverted; unsigned or unsent attempts spent no network fee |
 | Keeper tries to pay itself | Rejected | `InvalidRecipient` |
 | Rule replayed or used after expiry | Rejected | `StaleNonce` / `RuleExpired` |
-| App killed mid-fill | Nothing half done | Position unchanged on reopen, next try worked |
-| Two taps on Approve | One request | Only one reached the wallet |
-| Network down | Show last known state | "Showing the last reading" |
-| Wallet declines, times out or asks to reconnect | Say nothing changed, offer Try again | "Your wallet didn't sign · Nothing changed" |
-| Network drops after sending | Don't offer a blind retry | "Check before retrying", points to Activity |
+| App killed mid-fill | Reload the chain state on reopen | Earlier build preserved the position; latest interruption timings are not exhaustively tested |
+| Two taps on Approve | One request | Previously checked in the app; current code guards concurrent requests |
+| Network down | Keep the last reading, let its price age | Test.13 showed stale-price "Needs attention" and blocked release review |
+| Wallet refuses without signing | Allow a safe retry | Test-wallet declines and invalid payloads recognized in test.13 |
+| Authorization expired | Ask for fresh authorization | Test.13 recovered with the test wallet |
+| Network drops after sending | Don't offer a blind retry | Uncertain results say "Check before retrying"; unit checks and selected UI checks passed, exhaustive fault timing remains untested |
 | Wallet has no SOL for fees | Say so before asking to sign | "Your wallet needs Devnet SOL first" + faucet link |
-| Price older than 30 s, or dated in the future | Rule won't fire | Enforced in the program, covered by a unit test |
+| Price older than 30 s, or more than 5 s in the future | Rule won't fire | Enforced in the program and covered by tests |
+| Rule armed, but no short open | Recovery must still cancel the rule | Test.15 revoked it before marking the step done |
+| RPC rejects batched history reads | Activity still loads | Test.15 populated Activity using individual reads |
 
 ## Architecture
 
@@ -173,8 +210,9 @@ npx expo run:android
 
 ## Limitations
 
-- **Devnet only, with test funds.** No audit has been done.
-- **Fills can take a few tries.** Velocity's Devnet market often can't fill a full order right away, so you may approve a release or hedge change more than once. Unfilled tries change nothing.
+- **Devnet only, with test funds.** A functional and code audit has been performed; no independent security audit has been done.
+- **Fills are not guaranteed.** Waiting before approval reduces unnecessary prompts, but Velocity can become unfillable before the trade lands. A hedge action can still exhaust ten approvals. Failed transactions leave your position unchanged but can cost network fees.
+- **Newest real-wallet compatibility remains unverified.** Phantom and Solflare need testing on a real phone with this release.
 - **Keeper uptime:** the free GitHub Actions keeper has short gaps of a few minutes between runs.
 - **You connect your wallet again each time you open the app.**
 - **Android only.** The APK is installed directly, not from a store.

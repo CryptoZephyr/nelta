@@ -7,8 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing vX.Y.Z tag to rebuild
+        description: Existing vX.Y.Z tag to rebuild, or commit SHA for a test build
         required: true
+      test:
+        description: Build a signed test APK artifact without publishing a release
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -40,11 +44,21 @@ jobs:
           distribution: temurin
           java-version: 17
       - name: Check app.json matches the tag
+        if: ${{ !inputs.test }}
         run: |
           version=$(node -p "require('./app.json').expo.version")
           code=$(node -p "require('./app.json').expo.android.versionCode")
           [ "$TAG" = "v$version" ] || { echo "Tag $TAG does not match app.json version $version"; exit 1; }
           [[ "$code" =~ ^[0-9]+$ ]] || { echo "app.json android.versionCode is missing"; exit 1; }
+      - name: Mark the test build
+        if: ${{ inputs.test }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const config = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+          config.expo.version += `-test.${process.env.GITHUB_RUN_NUMBER}`;
+          fs.writeFileSync('app.json', JSON.stringify(config, null, 2) + '\n');
+          NODE
       - run: npm ci
       - run: npx expo prebuild --platform android --no-install
       - name: Build and sign
@@ -62,9 +76,29 @@ jobs:
           scripts/sign-release.sh android/app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/nelta.apk"
           rm -f "$NELTA_RELEASE_STORE_FILE"
       - name: Attach nelta.apk to the release
+        if: ${{ !inputs.test }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
           gh release upload "$TAG" "$RUNNER_TEMP/nelta.apk" --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Prepare the test APK
+        if: ${{ inputs.test }}
+        run: |
+          mv "$RUNNER_TEMP/nelta.apk" "$RUNNER_TEMP/nelta-test.apk"
+          {
+            printf 'Source commit: %s\n' "$(git rev-parse HEAD)"
+            printf 'Version: %s\n' "$(node -p "require('./app.json').expo.version")"
+            printf 'Version code: %s\n' "$(node -p "require('./app.json').expo.android.versionCode")"
+            sha256sum "$RUNNER_TEMP/nelta-test.apk"
+          } > "$RUNNER_TEMP/nelta-test-build.txt"
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.test }}
+        with:
+          name: nelta-test-apk
+          path: |
+            ${{ runner.temp }}/nelta-test.apk
+            ${{ runner.temp }}/nelta-test-build.txt
+          if-no-files-found: error
+          retention-days: 14

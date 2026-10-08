@@ -1,15 +1,17 @@
-import { Connection, PublicKey, Transaction, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
+import { Connection, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
 import { SolanaMobileWalletAdapterProtocolErrorCode } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Nelta, RPC, Snapshot, SOL_ORACLE } from "./nelta";
 import idl from "./nelta.json";
 import { Tone } from "./theme";
 import { connect, disconnect, signAndSend, signForFill } from "./wallet";
+import { settle } from "./confirmation";
+import { FILL_ERROR, sendWhenFillable } from "./fill";
 
 export const connection = new Connection(RPC, "confirmed");
 const FILL_TRIES = 10;
-const FILL_ERROR = /0x1891|6289|SuccessCondition/i;
-const EXPIRY_MARGIN_BLOCKS = 20;
+const VENUE_WAIT_MS = 180_000;
+const PROBE_FAILURES = 5;
 
 export interface Change {
   label: string;
@@ -30,6 +32,7 @@ export interface Plan {
 export type Phase =
   | { kind: "preview" }
   | { kind: "wallet"; why: string }
+  | { kind: "venue"; attempt: number }
   | { kind: "confirming"; sig?: string }
   | { kind: "filling"; attempt: number; max: number; set: number; sets: number }
   | { kind: "done"; sig: string }
@@ -71,7 +74,8 @@ const WALLET_SILENT: ConnectIssue = {
 
 function connectIssue(e: unknown): ConnectIssue {
   const raw = e instanceof Error ? e.message : JSON.stringify(e);
-  if (/ERROR_WALLET_NOT_FOUND|no.*wallet.*found|not found/i.test(raw))
+  if ((e as { code?: unknown } | null)?.code === "ERROR_WALLET_NOT_FOUND" ||
+    /ERROR_WALLET_NOT_FOUND|found no installed wallet|no.*wallet.*found|not found/i.test(raw))
     return { tone: "waiting", title: "No Solana wallet found", body: "Install Phantom or Solflare, switch it to Devnet, then tap Connect again." };
   if (/cluster|chain/i.test(raw) && /support|mismatch|invalid|unknown/i.test(raw)) return WALLET_SILENT;
   const { title } = explain(e, false);
@@ -124,7 +128,12 @@ function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> 
       body: sent ? "It may still land. Check Activity before trying again." : "Nothing was sent. Try again in a moment.",
       nothingChanged: !sent,
     };
-  return { kind: "failed", title: "Something went wrong", body: raw.slice(0, 180), nothingChanged: false };
+  return {
+    kind: "failed",
+    title: sent ? "Check the transaction result" : "Couldn’t prepare this transaction",
+    body: sent ? "It may still land. Check Activity before trying again." : "Nothing was sent. Check your connection and try again.",
+    nothingChanged: !sent,
+  };
 }
 
 interface Store {
@@ -171,7 +180,9 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       setReadError(null);
     } catch (e) {
       if ((e as Error).name === "InvalidVenueState") setSnap(null);
-      setReadError((e as Error).message);
+      setReadError((e as Error).name === "InvalidVenueState"
+        ? "Velocity returned an unexpected position. Nelta can’t safely continue; try again"
+        : "Devnet is unavailable. Check your connection and try again");
     }
   }, [nelta]);
 
@@ -229,11 +240,11 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       let sig: string;
       if (!plan.fill) {
         set({ kind: "wallet", why: "Approve one transaction in your wallet." });
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-        sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash));
+        const { context, value: { blockhash, lastValidBlockHeight } } = await connection.getLatestBlockhashAndContext("confirmed");
+        sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash), { minContextSlot: context.slot }, (v) => { sent = v; });
         sent = true;
         set({ kind: "confirming", sig });
-        const err = await settle(sig, lastValidBlockHeight);
+        const err = await settle(connection, sig, lastValidBlockHeight);
         if (err === "expired") throw new Error("network: the transaction expired before it landed");
         if (err) throw new Error(err);
       } else {
@@ -256,49 +267,30 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Waits until a transaction landed or can no longer land. Returns null on success, the on-chain error as JSON,
- * or "expired" if it never landed. Polls over HTTP; websocket confirmations stall when mobile networks drop the socket.
+ * Before asking for an approval, waits until an unsigned copy of the try would fill right after a price update, so
+ * the user isn't asked to approve tries Velocity can't fill yet. Throws NoFill if no such moment comes in time.
  */
-const SILENT_RPC_MS = 60_000;
-
-async function settle(sig: string, lastValidBlockHeight: number): Promise<string | null> {
-  const status = async (history: boolean) =>
-    (await connection.getSignatureStatuses([sig], { searchTransactionHistory: history }).catch(() => null))?.value[0] ?? null;
-  let lastHeard = Date.now();
-  for (;;) {
-    const [st, height] = await Promise.all([status(false), connection.getBlockHeight("confirmed").catch(() => 0)]);
-    if (height > 0) lastHeard = Date.now();
-    else if (Date.now() - lastHeard > SILENT_RPC_MS) throw new Error("network: Devnet stopped answering while confirming");
-    if (st?.err) return JSON.stringify(st.err);
-    if (st?.confirmationStatus === "confirmed" || st?.confirmationStatus === "finalized") return null;
-    if (height > lastValidBlockHeight) {
-      const last = await status(true);
-      if (last?.err) return JSON.stringify(last.err);
-      return last?.confirmationStatus === "confirmed" || last?.confirmationStatus === "finalized" ? null : "expired";
-    }
-    await new Promise((r) => setTimeout(r, 1_000));
-  }
-}
-
-/**
- * Holds a signed try until a simulation right after a price update says Velocity can fill it, then sends it. The
- * fill only works within a few slots of a price update, which is shorter than a wallet approval takes.
- * Returns null if the blockhash ran out first; the try was never sent, so it can never land.
- */
-async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: number, onBroadcast: () => void): Promise<string | null> {
-  const raw = signed.serialize();
-  const versioned = VersionedTransaction.deserialize(raw);
-  while ((await connection.getBlockHeight("confirmed").catch(() => 0)) < lastValidBlockHeight - EXPIRY_MARGIN_BLOCKS) {
+async function waitUntilFillable(n: Nelta, plan: Plan): Promise<void> {
+  const deadline = Date.now() + VENUE_WAIT_MS;
+  let failures = 0;
+  while (Date.now() < deadline) {
     await nextOracleUpdate();
-    const sim = await connection.simulateTransaction(versioned, { sigVerify: false, commitment: "processed" }).catch(() => null);
-    if (!sim) continue;
+    let sim;
+    try {
+      const ixs = await plan.ixs(n);
+      const { blockhash } = await connection.getLatestBlockhash("confirmed");
+      const probe = new VersionedTransaction(n.tx(ixs, blockhash).compileMessage());
+      sim = await connection.simulateTransaction(probe, { sigVerify: false, replaceRecentBlockhash: true, commitment: "processed" });
+      failures = 0;
+    } catch (e) {
+      if (++failures >= PROBE_FAILURES) throw e;
+      continue;
+    }
     const err = sim.value.err ? JSON.stringify(sim.value.err) : null;
-    if (err && FILL_ERROR.test(err)) continue;
-    if (err) throw new Error(err);
-    onBroadcast();
-    return await connection.sendRawTransaction(raw, { skipPreflight: true });
+    if (!err) return;
+    if (!FILL_ERROR.test(err)) throw new Error(err);
   }
-  return null;
+  throw new NoFill("Velocity couldn’t fill while we waited");
 }
 
 /**
@@ -307,20 +299,22 @@ async function sendWhenFillable(signed: Transaction, lastValidBlockHeight: numbe
  */
 async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void): Promise<string> {
   for (let attempt = 1; attempt <= FILL_TRIES; attempt++) {
+    set({ kind: "venue", attempt });
+    await waitUntilFillable(n, plan);
     set({
       kind: "wallet",
       why: attempt === 1
-        ? "Approve in your wallet. Your wallet may warn it could fail: if Velocity can’t fill it, it changes nothing."
-        : `Try ${attempt - 1} didn’t fill, and nothing changed. Approve another try.`,
+        ? "Velocity can fill it now. Approve in your wallet. If it still doesn’t fill, it changes nothing."
+        : `Try ${attempt - 1} just missed, and nothing changed. Velocity can fill again now: approve one more try.`,
     });
     const ixs = await plan.ixs(n);
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
-    const signed = await signForFill(async () => n.tx(ixs, blockhash));
+    const { context, value: { blockhash, lastValidBlockHeight } } = await connection.getLatestBlockhashAndContext("confirmed");
+    const signed = await signForFill(async () => n.tx(ixs, blockhash), context.slot, setSent);
     set({ kind: "filling", attempt, max: FILL_TRIES, set: attempt, sets: FILL_TRIES });
-    const sig = "sig" in signed ? signed.sig : await sendWhenFillable(signed.signed, lastValidBlockHeight, () => setSent(true));
+    const sig = "sig" in signed ? signed.sig : await sendWhenFillable(connection, signed.signed, lastValidBlockHeight, nextOracleUpdate, () => setSent(true));
     if (sig === null) continue;
     setSent(true);
-    const err = await settle(sig, lastValidBlockHeight);
+    const err = await settle(connection, sig, lastValidBlockHeight);
     if (err === null) return sig;
     if (err !== "expired" && !FILL_ERROR.test(err)) throw new Error(err);
     setSent(false);

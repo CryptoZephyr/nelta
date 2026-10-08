@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { View } from "react-native";
-import { sol, until, usd } from "../../format";
+import { sol, toLamports, until, usd } from "../../format";
 import { PositionGate } from "../../gate";
 import { Header } from "../../header";
-import { LAMPORTS } from "../../nelta";
+import { PRICE_PRECISION } from "../../nelta";
 import * as plans from "../../plans";
 import { useNelta } from "../../store";
 import { useNow } from "../../now";
@@ -62,13 +62,14 @@ export default function Rule() {
 
   const triggerUsd = Number(trigger);
   const releaseSol = Number(amount);
-  const lamports = BigInt(Math.round((releaseSol || 0) * LAMPORTS));
-  const amountError = !amount ? null : !(releaseSol > 0) ? "Enter an amount above 0." : lamports > snap.solLamports ? `Nelta holds ${sol(snap.solLamports)} SOL.` : null;
-  const triggerError = !trigger ? null : !(triggerUsd > 0) ? "Enter a price above $0." : null;
+  const lamports = toLamports(amount);
+  const amountError = !amount ? null : !lamports ? "Enter a valid SOL amount above 0." : lamports > snap.solLamports ? `Nelta holds ${sol(snap.solLamports)} SOL.` : null;
+  const triggerPrice = Math.round(triggerUsd * PRICE_PRECISION);
+  const triggerError = !trigger ? null : !Number.isSafeInteger(triggerPrice) || triggerPrice <= 0 ? "Enter a valid price above $0." : null;
   const runsNow = triggerUsd > 0 && (above ? snap.price >= triggerUsd : snap.price <= triggerUsd);
-  const ready = triggerUsd > 0 && releaseSol > 0 && !amountError && !triggerError;
+  const ready = !!lamports && triggerUsd > 0 && !amountError && !triggerError;
   const fresh = !!nelta?.oracleFresh(snap);
-  const outcome = ready ? plans.releaseOutcome(snap, pos.ratioBps, lamports) : null;
+  const outcome = ready && lamports ? plans.releaseOutcome(snap, pos.ratioBps, lamports) : null;
 
   return (
     <Screen footer={<Button label="Review rule" icon="zap" disabled={!ready || !fresh} onPress={() => propose(plans.armRule(snap, triggerUsd, above, releaseSol, hours))} />}>
@@ -101,4 +102,3 @@ export default function Rule() {
     </Screen>
   );
 }
-

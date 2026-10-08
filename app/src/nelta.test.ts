@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
-import { decodePosition, InvalidVenueState, margin, parseOracle, readOrderStep, readPerpQuote, readShort, readSpot, readVenueStatus, targetShort, VELOCITY_LAYOUT } from "./nelta";
+import { mock, test } from "node:test";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { decodePosition, InvalidVenueState, margin, Nelta, parseOracle, readOrderStep, readPerpQuote, readShort, readSpot, readVenueStatus, SOL_ORACLE, targetShort, VELOCITY_LAYOUT } from "./nelta";
 
 // Same Devnet account snapshots and SDK-decoded values the Rust decoder tests use.
 const FIXTURES = join(__dirname, "../../programs/nelta/fixtures");
@@ -59,6 +60,33 @@ test("targetShort floors to the order step like the program", () => {
   assert.equal(targetShort(100_000_000n, 5_000, 100_000n), 50_000_000n);
   assert.equal(targetShort(60_000_000n, 5_000, 100_000n), 30_000_000n);
   assert.equal(targetShort(123_456_789n, 5_000, 100_000n), 61_700_000n);
+});
+
+test("a cached snapshot becomes stale even when the next RPC refresh fails", async () => {
+  const oracle = bin("sol_oracle.bin");
+  const { publishTs } = parseOracle(oracle);
+  let now = publishTs + 3;
+  const clock = mock.method(Date, "now", () => now * 1000);
+  try {
+    const connection = new Connection("https://api.devnet.solana.com");
+    connection.getAccountInfo = async (key) => key.equals(SOL_ORACLE)
+      ? { data: oracle, executable: false, lamports: 1, owner: SOL_ORACLE, rentEpoch: 0 }
+      : null;
+    connection.getBalance = async () => 1;
+    const nelta = new Nelta(connection, new PublicKey(expected.position.owner));
+    const cached = await nelta.snapshot();
+    assert.equal(cached.oracleAgeSecs, 3);
+    assert.equal(nelta.oracleFresh(cached), true);
+    connection.getAccountInfo = async () => { throw new Error("network offline"); };
+    now += 28;
+    await assert.rejects(nelta.snapshot(), /network offline/);
+    assert.equal(cached.oracleAgeSecs, 31);
+    assert.equal(nelta.oracleFresh(cached), false);
+    now = publishTs - 6;
+    assert.equal(nelta.oracleFresh(cached), false);
+  } finally {
+    clock.mock.restore();
+  }
 });
 
 // Values below were read from the same fixtures with the SDK's Velocity IDL (BorshAccountsCoder).
