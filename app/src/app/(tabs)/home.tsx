@@ -51,7 +51,7 @@ function RatioCard({ snap, fresh }: { snap: Snapshot; fresh: boolean }) {
       <T v="h2">Hedge ratio</T>
       <T v="caption" style={{ marginTop: space.xs }}>Choose how much of your SOL’s price change to offset. Saved target: {current}%.</T>
       <Segmented options={[25, 50, 75, 100].map((v) => ({ value: v, label: `${v}%` }))} value={ratio} onChange={setRatio} />
-      <HedgeExplanation ratioPct={ratio} />
+      <HedgeExplanation ratioPct={ratio} shortBase={snap.shortBase} />
       <Button label="Review change" kind="secondary" disabled={ratio === current || !fresh} onPress={() => propose(plans.changeRatio(snap, ratio * 100))} />
     </Card>
   );
@@ -67,7 +67,7 @@ function Setup() {
         A hedge helps offset a fall in SOL’s dollar value. Choose how much of your SOL to cover; Nelta keeps the hedge sized to the SOL you hold.
       </T>
       <Segmented options={[25, 50, 75, 100].map((v) => ({ value: v, label: `${v}%` }))} value={ratio} onChange={setRatio} />
-      <HedgeExplanation ratioPct={ratio} />
+      <HedgeExplanation ratioPct={ratio} shortBase={0n} />
       <T v="caption" style={{ marginTop: space.sm }}>Next: get free test dUSDT, add the SOL amount you choose, then sync your hedge.</T>
       <Button label="Review setup" onPress={() => propose(plans.createPosition(ratio * 100))} />
     </Card>

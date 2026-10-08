@@ -15,7 +15,7 @@ import {
   ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { age } from "./format";
+import { age, hedgeExplanation } from "./format";
 import { Icon, IconName } from "./icons";
 import { color, font, radius, space, tone as tones, Tone, touch } from "./theme";
 
@@ -201,12 +201,10 @@ export function StalePriceNotice({ ageSecs }: { ageSecs: number }) {
   return <Notice tone="drift" icon="clock" title="Waiting for a fresh price" body={`${why} Hedge changes, releases and rules wait for a fresh price. Any open short still follows the market.`} />;
 }
 
-export function HedgeExplanation({ ratioPct }: { ratioPct: number }) {
+export function HedgeExplanation({ ratioPct, shortBase }: { ratioPct: number; shortBase: bigint }) {
   return (
     <T v="caption" style={{ marginTop: space.sm }}>
-      {ratioPct === 0
-        ? "Your hedge is off. Any SOL you hold follows the market price."
-        : `A short gains when SOL falls and loses when SOL rises. At ${ratioPct}%, it aims to offset roughly ${ratioPct}% of your SOL’s price change. Fees and funding still apply.`}
+      {hedgeExplanation(ratioPct, shortBase)}
     </T>
   );
 }
