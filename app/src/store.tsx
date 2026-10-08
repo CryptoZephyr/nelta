@@ -85,7 +85,7 @@ function connectIssue(e: unknown): ConnectIssue {
 function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> {
   const raw = e instanceof Error ? e.message : JSON.stringify(e);
   if (e instanceof NoFill)
-    return { kind: "failed", title: "No fill this time", body: "Velocity didn’t fill it while the price feed was fresh. Nothing changed. Try again in a minute.", nothingChanged: true };
+    return { kind: "failed", title: "Velocity couldn’t fill the order", body: "Your SOL and hedge stayed as they were. Any failed attempts sent to Devnet can still cost network fees. Try later; another attempt isn’t guaranteed to fill.", nothingChanged: true };
   const code = (e as { code?: unknown } | null)?.code;
   if (!sent && (WALLET_GONE.has(String(code)) || /session.*(timed? ?out|closed)/i.test(raw)))
     return {
@@ -304,8 +304,8 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
     set({
       kind: "wallet",
       why: attempt === 1
-        ? "Velocity can fill it now. Approve in your wallet. If it still doesn’t fill, it changes nothing."
-        : `Try ${attempt - 1} just missed, and nothing changed. Velocity can fill again now: approve one more try.`,
+        ? "The fill check passed. Approve in your wallet; the market can still change before the order lands. An unfilled order leaves your position unchanged, but a sent failure can cost a network fee."
+        : `Try ${attempt - 1} didn’t fill. Your position is unchanged, though a sent failure can cost a network fee. The new check passed; approve another try if you want to continue.`,
     });
     const ixs = await plan.ixs(n);
     const { context, value: { blockhash, lastValidBlockHeight } } = await connection.getLatestBlockhashAndContext("confirmed");

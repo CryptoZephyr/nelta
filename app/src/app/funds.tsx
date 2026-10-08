@@ -1,3 +1,4 @@
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import { View } from "react-native";
 import { sol } from "../format";
@@ -12,6 +13,7 @@ const FEE_BUFFER = 0.01 * LAMPORTS;
 
 export default function Funds() {
   const { snap, propose } = useNelta();
+  const router = useRouter();
   const [amount, setAmount] = useState("0.1");
   if (!snap?.position) return <Screen><PositionGate snap={snap} /></Screen>;
 
@@ -23,7 +25,7 @@ export default function Funds() {
   return (
     <Screen>
       <T v="h1">Add funds</T>
-      <T v="body" style={{ color: color.textMuted }}>Two separate steps: dUSDT collateral backs the short, and SOL goes into custody. One doesn’t create the other.</T>
+      <T v="body" style={{ color: color.textMuted }}>First add free test dUSDT to back your hedge. Then add the SOL amount you choose. Depositing SOL doesn’t give you dUSDT.</T>
 
       <Card style={needsCollateral ? { borderColor: color.brand } : null}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -39,7 +41,7 @@ export default function Funds() {
 
       <Card style={!needsCollateral && snap.solLamports === 0n ? { borderColor: color.brand } : null}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-          <T v="h2">2 · SOL to custody</T>
+          <T v="h2">2 · Add your SOL</T>
           <Pill tone={snap.solLamports > 0n ? "sync" : "waiting"} label={snap.solLamports > 0n ? `${sol(snap.solLamports)} SOL` : "To do"} />
         </View>
         {needsCollateral ? (
@@ -49,7 +51,8 @@ export default function Funds() {
             <Row label="Wallet" value={`${sol(snap.walletLamports, 3)} SOL`} />
             <Field label="Amount" unit="SOL" value={amount} onChange={setAmount} error={error} />
             <Button label="Review deposit" disabled={!!error || !(lamports > 0)} onPress={() => propose(plans.depositSol(snap, lamports))} />
-            <T v="caption" style={{ marginTop: space.sm, color: tone.waiting.fg }}>Next: Sync hedge on Home opens the short.</T>
+            <T v="caption" style={{ marginTop: space.sm, color: tone.waiting.fg }}>Adding SOL doesn’t open the hedge. After your deposit confirms, sync it on Home.</T>
+            {snap.solLamports > 0n && <Button label={snap.shortBase === snap.targetShort ? "View my position on Home" : "Go to Home to sync hedge"} kind="secondary" onPress={() => router.replace("/home")} />}
           </>
         )}
       </Card>

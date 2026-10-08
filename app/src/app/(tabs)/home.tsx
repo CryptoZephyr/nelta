@@ -10,7 +10,7 @@ import { Snapshot } from "../../nelta";
 import { useNow } from "../../now";
 import { connection, useNelta } from "../../store";
 import { color, font, space, tone } from "../../theme";
-import { Button, Card, ErrorState, Loading, Notice, Pair, Pill, Row, Segmented, Screen, StalePriceNotice, T } from "../../ui";
+import { Button, Card, ErrorState, HedgeExplanation, Loading, Notice, Pair, Pill, Row, Segmented, Screen, StalePriceNotice, T } from "../../ui";
 
 function useKeeper(): KeeperStatus | null {
   const [k, setK] = useState<KeeperStatus | null>(null);
@@ -26,7 +26,8 @@ function useKeeper(): KeeperStatus | null {
 function KeeperLine({ k }: { k: KeeperStatus | null }) {
   const online = k?.online;
   const t = online ? tone.sync : tone.waiting;
-  const label = !k ? "Checking keeper…" : online === null ? "Keeper status unknown" : online ? "Keeper online" : "Keeper offline";
+  const label = !k ? "Checking keeper…" : online === null ? "Keeper status unknown" : online ? "Recent keeper check-in" : "No recent keeper check-in";
+  const body = !k ? "Reading the keeper’s latest check-in from Devnet." : online === true ? "The keeper has checked in recently. Eligible rules still need a fresh price and a fill." : online === false ? "No recent check-in. Automatic rules may be delayed; you can still use Release or Recovery." : "Couldn’t confirm the keeper’s status. Check your connection; automatic execution isn’t confirmed.";
   return (
     <View style={hs.keeper}>
       <View style={[hs.dot, { backgroundColor: t.fg }]} />
@@ -34,7 +35,7 @@ function KeeperLine({ k }: { k: KeeperStatus | null }) {
         <T v="label" style={{ color: color.text }}>{label}</T>
         <T v="caption">
           {k?.lastSeenTs ? `Last seen on-chain ${ago(k.lastSeenTs)}. ` : ""}
-          {online ? "Watching the price while your phone is off." : "Your SOL is safe; armed rules wait until it’s back."}
+          {body}
         </T>
       </View>
     </View>
@@ -48,8 +49,9 @@ function RatioCard({ snap, fresh }: { snap: Snapshot; fresh: boolean }) {
   return (
     <Card>
       <T v="h2">Hedge ratio</T>
-      <T v="caption" style={{ marginTop: space.xs }}>How much of the SOL in custody the short covers. Now {current}%.</T>
+      <T v="caption" style={{ marginTop: space.xs }}>Choose how much of your SOL’s price change to offset. Saved target: {current}%.</T>
       <Segmented options={[25, 50, 75, 100].map((v) => ({ value: v, label: `${v}%` }))} value={ratio} onChange={setRatio} />
+      <HedgeExplanation ratioPct={ratio} />
       <Button label="Review change" kind="secondary" disabled={ratio === current || !fresh} onPress={() => propose(plans.changeRatio(snap, ratio * 100))} />
     </Card>
   );
@@ -62,10 +64,12 @@ function Setup() {
     <Card>
       <T v="h1">Set up Nelta</T>
       <T v="body" style={{ color: color.textMuted, marginTop: space.sm }}>
-        Choose how much of your SOL to hedge with a SOL-PERP short. Nelta keeps the two in step.
+        A hedge helps offset a fall in SOL’s dollar value. Choose how much of your SOL to cover; Nelta keeps the hedge sized to the SOL you hold.
       </T>
       <Segmented options={[25, 50, 75, 100].map((v) => ({ value: v, label: `${v}%` }))} value={ratio} onChange={setRatio} />
-      <Button label="Review" onPress={() => propose(plans.createPosition(ratio * 100))} />
+      <HedgeExplanation ratioPct={ratio} />
+      <T v="caption" style={{ marginTop: space.sm }}>Next: get free test dUSDT, add the SOL amount you choose, then sync your hedge.</T>
+      <Button label="Review setup" onPress={() => propose(plans.createPosition(ratio * 100))} />
     </Card>
   );
 }
@@ -75,7 +79,7 @@ function SetupSteps({ snap }: { snap: Snapshot }) {
     { done: true, label: "Create your position" },
     { done: snap.collateralBase > 0n, label: "Get dUSDT collateral for the short" },
     { done: snap.solLamports > 0n, label: "Add SOL to custody" },
-    { done: snap.solLamports > 0n && snap.shortBase === snap.targetShort, label: "Sync the hedge" },
+    { done: snap.shortBase > 0n && snap.shortBase === snap.targetShort, label: "Sync the hedge" },
   ];
   const next = steps.findIndex((s) => !s.done);
   return (
@@ -115,7 +119,7 @@ function ExitCard({ snap, fresh }: { snap: Snapshot; fresh: boolean }) {
   return (
     <Card>
       <T v="h2">Exit</T>
-      <T v="caption" style={{ marginTop: space.xs }}>Each one is a single transaction. If Velocity can’t fill it, nothing changes.</T>
+      <T v="caption" style={{ marginTop: space.xs }}>Each exit applies in one transaction. If Velocity can’t fill it, your SOL and hedge stay as they are. A failed transaction sent to Devnet can still cost a network fee.</T>
       <Button label="Keep my SOL, close hedge" kind="secondary" disabled={!fresh || !canClose} onPress={() => propose(plans.exitKeepSol(snap))} />
       <Button label="Release all, close hedge" kind="secondary" disabled={!fresh || snap.solLamports === 0n} onPress={() => propose(plans.exitReleaseAll(snap))} />
       <Button label="Step-by-step recovery" kind="quiet" onPress={() => router.push("/recovery")} />
@@ -158,6 +162,7 @@ export default function Home() {
   const ruleLive = rule.active && rule.expiryTs.toNumber() > now;
   const needsCollateral = snap.collateralBase === 0n;
   const needsSol = snap.solLamports === 0n;
+  const belowTradeSize = !needsSol && pos.ratioBps > 0 && snap.targetShort === 0n && snap.shortBase === 0n;
   const fresh = !!nelta?.oracleFresh(snap);
   const liquidating = snap.venueStatus.liquidating;
   const canAddRisk = fresh && !liquidating;
@@ -169,7 +174,7 @@ export default function Home() {
     ) : (
       <Button label={`Get ${plans.TEST_DUSDT} test dUSDT collateral`} onPress={() => propose(plans.faucetCollateral(snap))} />
     )
-  ) : needsSol ? (
+  ) : needsSol || belowTradeSize ? (
     <Button label="Add SOL" onPress={() => router.push("/funds")} />
   ) : !inSync ? (
     <Button label="Sync hedge" icon="link" disabled={!canAddRisk} onPress={() => propose(plans.syncHedge(snap))} />
@@ -212,7 +217,8 @@ export default function Home() {
         )}
       </Card>
 
-      {(needsCollateral || needsSol || (!inSync && snap.shortBase === 0n)) && <SetupSteps snap={snap} />}
+      {belowTradeSize && <Notice tone="waiting" title="Not enough SOL for a hedge yet" body="Your chosen hedge rounds down to zero at Velocity’s minimum trade size. Add more SOL or choose a higher percentage below. No short is open yet." />}
+      {(needsCollateral || needsSol || belowTradeSize || (!inSync && snap.shortBase === 0n)) && <SetupSteps snap={snap} />}
 
       <Card tint={ruleLive ? tone.armed.bg : undefined}>
         <View style={hs.between}>
