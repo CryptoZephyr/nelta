@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Connection } from "@solana/web3.js";
-import { toLamports } from "./format";
+import { hedgeExplanation, toLamports } from "./format";
 import { decodePosition, Nelta, Snapshot } from "./nelta";
 import idl from "./nelta.json";
 import { closeHedge } from "./plans";
@@ -42,4 +42,13 @@ test("recovery revokes an active rule before closing a nonzero hedge", async () 
 test("invalid and overflowing amounts never crash amount-input screens", () => {
   for (const value of ["", "0", "-1", "Infinity", "1e308", "NaN", "hello", "0.0000000001"]) assert.equal(toLamports(value), null);
   assert.equal(toLamports("0.073123456"), 73_123_456n);
+});
+
+test("a zero target is described as off only after the remaining short reaches zero", () => {
+  for (const shortBase of [50_000_000n, 10_000_000n, 1n]) {
+    const explanation = hedgeExplanation(0, shortBase);
+    assert.match(explanation, /short is still open/);
+    assert.doesNotMatch(explanation, /hedge is off/);
+  }
+  assert.match(hedgeExplanation(0, 0n), /hedge is off/);
 });

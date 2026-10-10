@@ -13,7 +13,7 @@ export function releaseOutcome(snap: Snapshot, ratioBps: number, lamports: bigin
 
 export const createPosition = (ratioBps: number): Plan => ({
   title: "Create your position",
-  summary: `Nelta opens a vault and a Velocity account that only the Nelta program controls. It will hedge ${ratioBps / 100}% of the SOL you add.`,
+  summary: `Creates your Nelta and Velocity accounts and saves a ${ratioBps / 100}% hedge target. No hedge is opened yet: next add test dUSDT and SOL, then tap Sync hedge.`,
   changes: [{ label: "Hedge ratio", to: `${ratioBps / 100}%` }],
   notes: ["Only your wallet can withdraw. The keeper can only run rules you arm."],
   ixs: (n) => n.createPositionIxs(ratioBps),
@@ -60,9 +60,9 @@ export const faucetCollateral = (snap: Snapshot): Plan => {
 
 export const syncHedge = (snap: Snapshot): Plan => ({
   title: "Sync hedge",
-  summary: "Moves the SOL-PERP short to its target so it matches the SOL Nelta holds.",
+  summary: "Adjusts the short to your chosen share of the SOL Nelta holds. The short gains when SOL falls and loses when SOL rises.",
   changes: [{ label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: `${sol(snap.targetShort)} SOL` }],
-  notes: ["Velocity has to fill the whole order at once. Nelta waits until it can before opening your wallet. If a try still misses, nothing changes."],
+  notes: ["Velocity must fill the whole order. Nelta checks before opening your wallet, but the market can change during approval. An unfilled try leaves the position unchanged; a sent failed transaction can still cost a network fee."],
   fill: true,
   ixs: (n) => n.rebalanceIxs(),
 });

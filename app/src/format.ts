@@ -10,6 +10,15 @@ export const toLamports = (s: string): bigint | null => {
   return Number.isSafeInteger(lamports) && lamports > 0 ? BigInt(lamports) : null;
 };
 
+export function hedgeExplanation(ratioPct: number, shortBase: bigint): string {
+  if (ratioPct === 0) {
+    return shortBase > 0n
+      ? "Your target is 0%, but the short is still open. It still gains when SOL falls and loses when SOL rises. Check Recovery until the short reaches zero."
+      : "Your hedge is off. Any SOL you hold follows the market price.";
+  }
+  return `A short gains when SOL falls and loses when SOL rises. At ${ratioPct}%, it aims to offset roughly ${ratioPct}% of your SOL’s price change. Fees and funding still apply.`;
+}
+
 export function ago(unixSecs: number): string {
   const d = Math.max(0, Math.floor(Date.now() / 1000) - unixSecs);
   if (d < 60) return `${d}s ago`;

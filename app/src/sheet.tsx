@@ -22,7 +22,7 @@ function ChangeRow({ c }: { c: Change }) {
 const LOW_FEE_LAMPORTS = 10_000_000;
 const MIN_FEE_LAMPORTS = 10_000;
 
-const STEPS = ["Waiting for Velocity", "Approve in wallet", "Waiting for a fill", "Confirmed on Devnet"];
+const STEPS = ["Checking Velocity", "Approve in wallet", "Checking and confirming", "Confirmed on Devnet"];
 
 function stepIndex(p: Phase, fill?: boolean): number {
   const offset = fill ? 1 : 0;
@@ -49,8 +49,8 @@ function Progress({ phase, fill }: { phase: Phase; fill?: boolean }) {
         <Notice
           tone="waiting"
           icon="clock"
-          title="Waiting for Velocity"
-          body="Velocity’s test market can’t take this order right now. Nelta checks after every price update and opens your wallet only once it can fill. You don’t need to do anything; this can take a minute or two."
+          title={`Waiting for Velocity · try ${phase.attempt}`}
+          body="Checking whether the test market can fill your whole order before asking you to approve. Each wait can take about three minutes. A passing check helps, but the market can change during approval."
         />
       )}
       {phase.kind === "wallet" && <T v="caption">{phase.why}</T>}
@@ -59,7 +59,7 @@ function Progress({ phase, fill }: { phase: Phase; fill?: boolean }) {
           tone="waiting"
           icon="clock"
           title={`Try ${phase.attempt} of ${phase.max}`}
-          body="Velocity fills only while its price feed is fresh. Each try either fills fully or changes nothing, so it’s safe to wait here."
+          body="Keep Nelta open while it checks and confirms your approved order. An unfilled order leaves your position unchanged; a failed attempt sent to Devnet can still cost a network fee."
         />
       )}
       {phase.kind === "confirming" && phase.sig && <T v="mono">{short(phase.sig, 8)}</T>}
@@ -110,11 +110,12 @@ export function FlowSheet() {
               <Pressable onPress={() => void Linking.openURL(explorerTx(phase.sig))} style={st.link} accessibilityRole="link">
                 <T v="mono" style={{ color: color.brand }}>View {short(phase.sig, 8)} in Explorer</T>
               </Pressable>
+              <T v="caption">You can find this receipt again in Activity.</T>
             </>
           )}
           {phase.kind === "failed" && (
             <>
-              <Notice tone={phase.nothingChanged ? "waiting" : "failed"} title={phase.nothingChanged ? "Nothing changed" : "Check before retrying"} body={phase.body} />
+              <Notice tone={phase.nothingChanged ? "waiting" : "failed"} title={phase.nothingChanged ? "Changes not applied" : "Check before retrying"} body={phase.body} />
             </>
           )}
         </ScrollView>
@@ -123,7 +124,7 @@ export function FlowSheet() {
             {noFee ? (
               <Button label="Get Devnet SOL" icon="wallet" onPress={() => void Linking.openURL("https://faucet.solana.com")} />
             ) : (
-              <Button label="Approve in wallet" icon="wallet" onPress={() => void approve()} />
+              <Button label={plan.fill ? "Check Velocity before approval" : "Approve in wallet"} icon="wallet" onPress={() => void approve()} />
             )}
             <Button label="Not now" kind="quiet" onPress={dismiss} />
           </>

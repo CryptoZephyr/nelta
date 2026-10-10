@@ -42,7 +42,7 @@ export default function ActivityScreen() {
       <T v="body" style={{ color: color.textMuted }}>Every change to your position, and who made it. Tap one to see it on Solana Explorer.</T>
       {error && <ErrorState title="Couldn’t load activity" body="Devnet is busy. Your funds aren’t affected." onRetry={() => void pull()} retrying={loading} />}
       {!items && !error && <Loading label="Loading your activity from Devnet…" />}
-      {items?.length === 0 && <T v="caption" style={{ marginTop: space.lg }}>Nothing yet. Every approval you make, and every keeper run, shows up here with a Devnet link.</T>}
+      {items?.length === 0 && <T v="caption" style={{ marginTop: space.lg }}>No sent transactions yet. Nelta transactions and keeper actions appear here with Devnet links. Approvals that weren’t sent won’t appear.</T>}
       {items && items.length > 0 && (
         <Card style={{ paddingVertical: space.sm }}>
           {items.map((a, i) => (
@@ -57,13 +57,14 @@ export default function ActivityScreen() {
                 <Icon name={a.by === "keeper" ? "zap" : "wallet"} size={18} tint={a.by === "keeper" ? tone.ran.fg : color.textMuted} />
               </View>
               <View style={{ flex: 1 }}>
-                <T v="label" style={{ color: a.ok ? color.text : color.textMuted }}>{a.ok ? a.what : "Try that didn’t fill"}</T>
+                <T v="label" style={{ color: a.ok ? color.text : color.textMuted }}>{a.ok ? a.what : `Failed: ${a.what}`}</T>
                 <T v="caption">
-                  {a.by === "keeper" ? "Keeper, no phone needed" : "You"} · {a.ts ? ago(a.ts) : "pending"}
+                  {a.by === "keeper" ? "Keeper, no new approval" : "You"} · {a.ts ? ago(a.ts) : "pending"}
                 </T>
+                {!a.ok && <T v="caption">Sent to Devnet; a network fee may still apply.</T>}
                 <T v="mono">{short(a.sig, 6)}</T>
               </View>
-              {a.ok ? a.by === "keeper" && <Pill tone="ran" label="Offline run" /> : <Pill tone="waiting" label="Nothing changed" />}
+              {a.ok ? a.by === "keeper" && <Pill tone="ran" label="Automatic" /> : <Pill tone="waiting" label="Not applied" />}
             </Pressable>
           ))}
         </Card>

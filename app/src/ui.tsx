@@ -15,7 +15,7 @@ import {
   ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { age } from "./format";
+import { age, hedgeExplanation } from "./format";
 import { Icon, IconName } from "./icons";
 import { color, font, radius, space, tone as tones, Tone, touch } from "./theme";
 
@@ -138,7 +138,9 @@ function Bar({ fraction, fill, notch }: { fraction: number; fill: string; notch?
 export function Pair({ custody, shortNow, target, inSync, ratioPct }: { custody: number; shortNow: number; target: number; inSync: boolean; ratioPct: number }) {
   const max = Math.max(custody, shortNow, target, 1e-9);
   const off = Math.abs(shortNow - target);
-  const t = inSync ? tones.sync : tones.drift;
+  const noHedge = shortNow === 0 && target === 0;
+  const t = noHedge ? tones.waiting : inSync ? tones.sync : tones.drift;
+  const label = custody === 0 && shortNow === 0 ? "No SOL added yet" : ratioPct === 0 && shortNow === 0 ? "Hedge off" : noHedge ? "Below minimum trade size" : inSync ? `In sync · ${ratioPct}% target` : `Off by ${off.toFixed(4)} SOL`;
   return (
     <View accessibilityLabel={`SOL in custody ${custody.toFixed(4)}, short ${shortNow.toFixed(4)}, target ${target.toFixed(4)}`}>
       <View style={s.pairHead}>
@@ -149,8 +151,8 @@ export function Pair({ custody, shortNow, target, inSync, ratioPct }: { custody:
       <View style={s.bridge}>
         <View style={[s.bridgeLine, { backgroundColor: t.fg }]} />
         <View style={[s.bridgeTag, { backgroundColor: t.bg }]}>
-          <Icon name={inSync ? "link" : "unlink"} size={14} tint={t.fg} />
-          <Text style={[s.pillText, { color: t.fg }]}>{inSync ? `Linked · ${ratioPct}% hedged` : `Off by ${off.toFixed(4)} SOL`}</Text>
+          <Icon name={noHedge ? "clock" : inSync ? "link" : "unlink"} size={14} tint={t.fg} />
+          <Text style={[s.pillText, { color: t.fg }]}>{label}</Text>
         </View>
       </View>
       <View style={s.pairHead}>
@@ -196,7 +198,15 @@ export function ErrorState({ title, body, onRetry, retrying }: { title: string; 
 
 export function StalePriceNotice({ ageSecs }: { ageSecs: number }) {
   const why = ageSecs < 0 ? "Velocity’s price feed shows a time in the future, so it can’t be trusted yet." : `Velocity’s price feed hasn’t updated for ${age(ageSecs)}.`;
-  return <Notice tone="drift" icon="clock" title="Needs attention" body={`${why} Hedge changes and rules wait until it’s fresh. Your SOL is safe and nothing will move.`} />;
+  return <Notice tone="drift" icon="clock" title="Waiting for a fresh price" body={`${why} Hedge changes, releases and rules wait for a fresh price. Any open short still follows the market.`} />;
+}
+
+export function HedgeExplanation({ ratioPct, shortBase }: { ratioPct: number; shortBase: bigint }) {
+  return (
+    <T v="caption" style={{ marginTop: space.sm }}>
+      {hedgeExplanation(ratioPct, shortBase)}
+    </T>
+  );
 }
 
 export const s = StyleSheet.create({
