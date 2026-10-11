@@ -2,7 +2,7 @@
 
 **Nelta keeps your SOL and its hedge together.** Protect your SOL against a price drop, and take SOL out without your protection going wrong.
 
-Download: [nelta.apk (Android, 1.3.2)](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.2/nelta.apk) · [Release notes](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.2) · Video: not available yet · Docs: this README and [Devnet evidence](docs/devnet-evidence.md) · Built for: Solana Mobile CLOCK IN
+Download: [nelta.apk (Android, 1.3.2)](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.2/nelta.apk) · [Release notes](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.2) · Video: [Watch the demo](https://youtu.be/AL-gIJ87bSA?si=LFK-Uo-otsmTxdVu) · Docs: this README and [Devnet evidence](docs/devnet-evidence.md) · Built for: Solana Mobile CLOCK IN
 
 ![Nelta on Android: welcome, change hedge, waiting for a fill, done](docs/img/screens.png)
 
