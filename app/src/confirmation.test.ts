@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Connection, SignatureStatus } from "@solana/web3.js";
-import { settle } from "./confirmation";
+import { resolveReceipt, resolveReceiptFlow, settle } from "./confirmation";
+import type { Plan } from "./store";
+import type { TutorialAttempt } from "./tutorial";
 
 function rpc(status: SignatureStatus | null, height = 101): Connection {
   const c = new Connection("https://api.devnet.solana.com");
@@ -78,4 +80,66 @@ test("a status RPC that never responds is bounded", async (t) => {
   now = 60_001;
   t.mock.timers.tick(60_001);
   await rejected;
+});
+
+test("settlement retains the successful receipt slot without requiring another status lookup", async () => {
+  const c = rpc({ slot: 4242, confirmations: 1, err: null, confirmationStatus: "confirmed" });
+  let slot: number | undefined;
+  assert.equal(await settle(c, "sig", 100, (value) => { slot = value; }), null);
+  assert.equal(slot, 4242);
+  c.getSignatureStatuses = async () => { assert.fail("completed attempts must not query the old receipt"); };
+  const recent: TutorialAttempt = { owner: "owner", phase: { kind: "done", sig: "sig" }, sig: "sig", at: 1, fill: true, hedgeSetup: true, slot };
+  assert.equal(await resolveReceipt(c, recent, 2), recent);
+  assert.equal(recent.slot, 4242);
+});
+
+test("uncertain receipt lookup failures and missing statuses preserve uncertainty without throwing", async () => {
+  const recent: TutorialAttempt = {
+    owner: "owner", sig: "sig", at: 1, fill: true, hedgeSetup: true,
+    phase: { kind: "failed", title: "Check before retrying", body: "It may still land.", nothingChanged: false },
+  };
+  const c = rpc(null);
+  assert.equal(await resolveReceipt(c, recent, 2), recent);
+  c.getSignatureStatuses = async () => { throw new Error("fetch failed"); };
+  assert.equal(await resolveReceipt(c, recent, 2), recent);
+  c.getSignatureStatuses = async () => ({ context: { slot: 1 }, value: [{ slot: 1, confirmations: 0, err: null, confirmationStatus: "processed" }] });
+  assert.equal(await resolveReceipt(c, recent, 2), recent);
+});
+
+test("confirmed uncertain receipts resolve once and retain the slot for the following account read", async () => {
+  const recent: TutorialAttempt = {
+    owner: "owner", sig: "sig", at: 1, fill: true, hedgeSetup: true,
+    phase: { kind: "failed", title: "Check before retrying", body: "It may still land.", nothingChanged: false },
+  };
+  const c = rpc({ slot: 4242, confirmations: 1, err: null, confirmationStatus: "confirmed" });
+  const done = await resolveReceipt(c, recent, 2);
+  assert.deepEqual(done.phase, { kind: "done", sig: "sig" });
+  assert.equal(done.slot, 4242);
+  assert.equal(done.at, 2);
+  const failed = await resolveReceipt(rpc({ slot: 4243, confirmations: 1, err: { InstructionError: [0, { Custom: 6289 }] }, confirmationStatus: "confirmed" }), recent, 3);
+  assert.equal(failed.phase.kind, "failed");
+  assert.equal(failed.phase.kind === "failed" && failed.phase.nothingChanged, true);
+  assert.equal(failed.slot, 4243);
+  c.getSignatureStatuses = async () => { assert.fail("resolved receipts must not be queried again"); };
+  assert.equal(await resolveReceipt(c, done, 4), done);
+  assert.equal(await resolveReceipt(c, failed, 4), failed);
+});
+
+test("receipt recovery updates the matching sheet but never reopens a closed sheet or replaces a new action", async () => {
+  const previous: TutorialAttempt = {
+    owner: "owner", sig: "sig", at: 1, fill: true, hedgeSetup: true,
+    phase: { kind: "failed", title: "Check before retrying", body: "It may still land.", nothingChanged: false },
+  };
+  const plan: Plan = { title: "Sync hedge", summary: "Sync", changes: [], ixs: async () => [] };
+  const flow = { plan, phase: previous.phase };
+  const resolved = await resolveReceipt(rpc({ slot: 42, confirmations: 1, err: null, confirmationStatus: "confirmed" }), previous, 2);
+  assert.deepEqual(resolveReceiptFlow(flow, previous, resolved)?.phase, { kind: "done", sig: "sig" });
+  const failed = await resolveReceipt(rpc({ slot: 42, confirmations: 1, err: { InstructionError: [0, { Custom: 6289 }] }, confirmationStatus: "confirmed" }), previous, 2);
+  assert.equal(resolveReceiptFlow(flow, previous, failed)?.phase.kind, "failed");
+  assert.equal(resolveReceiptFlow(flow, previous, failed)?.phase, failed.phase);
+  assert.equal(resolveReceiptFlow(null, previous, resolved), null);
+  const newer = { plan, phase: { kind: "preview" as const } };
+  assert.equal(resolveReceiptFlow(newer, previous, resolved), newer);
+  assert.equal(resolveReceiptFlow(flow, previous, { ...resolved, owner: "another-wallet" }), flow);
+  assert.equal(resolveReceiptFlow(flow, previous, { ...resolved, sig: "different-signature" }), flow);
 });

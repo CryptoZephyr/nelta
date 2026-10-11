@@ -7,6 +7,7 @@ import { color, space } from "../theme";
 import { PositionGate } from "../gate";
 import { useNow } from "../now";
 import { Button, Card, Field, Notice, Row, Screen, Segmented, StalePriceNotice, T } from "../ui";
+import { FeatureTutorial } from "../tutorial-ui";
 
 export default function Release() {
   const { nelta, snap, propose } = useNelta();
@@ -25,6 +26,7 @@ export default function Release() {
   return (
     <Screen footer={<Button label="Review release" disabled={!outcome || !inSync || !fresh} onPress={() => lamports && propose(plans.release(snap, lamports))} />}>
       <T v="h1">Release SOL</T>
+      <FeatureTutorial feature="release" />
       <T v="body" style={{ color: color.textMuted }}>Shrinks the short and sends SOL to your wallet in one transaction. If the hedge can’t be reduced, nothing moves.</T>
       {!fresh && <StalePriceNotice ageSecs={snap.oracleAgeSecs} />}
       {!inSync && <Notice tone="drift" title="Sync the hedge first" body="Your short doesn’t match the SOL Nelta holds. Sync it from Home, then release." />}

@@ -25,7 +25,7 @@ export function Header({ title }: { title?: string }) {
         >
           <T v="mono" style={{ color: color.text }}>{short(addr)}</T>
         </Pressable>
-        <Pressable onPress={() => router.push("/recovery")} style={hs.icon} accessibilityLabel="Recovery">
+        <Pressable onPress={() => router.push("/help")} style={hs.icon} accessibilityRole="button" accessibilityLabel="Help">
           <Icon name="lifebuoy" size={22} />
         </Pressable>
       </View>

@@ -9,6 +9,7 @@ import { useNelta } from "../../store";
 import { useNow } from "../../now";
 import { color, space, tone } from "../../theme";
 import { Button, Card, Field, Notice, Pill, Row, Screen, Segmented, StalePriceNotice, T } from "../../ui";
+import { FeatureTutorial } from "../../tutorial-ui";
 
 const EXPIRY = [
   { value: 6, label: "6 h" },
@@ -43,6 +44,7 @@ export default function Rule() {
     return (
       <Screen footer={<Button label="Revoke rule" kind="danger" onPress={() => propose(plans.revokeRule())} />}>
         <Header />
+        <FeatureTutorial feature="rule" />
         <Card tint={tone.armed.bg}>
           <Pill tone="armed" label="Armed" icon="zap" />
           <T v="h1" style={{ marginTop: space.md }}>
@@ -55,7 +57,7 @@ export default function Rule() {
             <Row label="Rule number" value={`#${pos.ruleNonce.toString()}`} />
           </View>
         </Card>
-        <Notice tone="sync" icon="shield" title="Safe to close the app" body="The keeper runs this once, even with your phone off. It can only shrink your position, and the SOL can only go to your wallet." />
+        <Notice tone="sync" icon="shield" title="Safe to close the app" body="The keeper can run this once while the app is closed, if the conditions, fresh price and fill allow it. Execution can be delayed or fail. It can only shrink your position and pay your wallet." />
       </Screen>
     );
   }
@@ -75,6 +77,7 @@ export default function Rule() {
     <Screen footer={<Button label="Review rule" icon="zap" disabled={!ready || !fresh} onPress={() => propose(plans.armRule(snap, triggerUsd, above, releaseSol, hours))} />}>
       <Header />
       <T v="h1">Write a rule</T>
+      <FeatureTutorial feature="rule" />
       <T v="body" style={{ color: color.textMuted }}>One rule at a time. It runs once, then turns itself off.</T>
       {!fresh && <StalePriceNotice ageSecs={snap.oracleAgeSecs} />}
       <Card>

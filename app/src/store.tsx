@@ -1,12 +1,11 @@
 import { Connection, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
-import { SolanaMobileWalletAdapterProtocolErrorCode } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Nelta, RPC, Snapshot, SOL_ORACLE } from "./nelta";
-import idl from "./nelta.json";
 import { Tone } from "./theme";
 import { connect, disconnect, signAndSend, signForFill } from "./wallet";
-import { settle } from "./confirmation";
-import { FILL_ERROR, sendWhenFillable } from "./fill";
+import { resolveReceipt, resolveReceiptFlow, settle } from "./confirmation";
+import { explain, FILL_ERROR, NoFill, sendWhenFillable } from "./fill";
+import { DEVNET_CHAIN, DEVNET_GENESIS, PositionReading, TutorialAttempt } from "./tutorial";
 
 export const connection = new Connection(RPC, "confirmed");
 const FILL_TRIES = 10;
@@ -26,6 +25,7 @@ export interface Plan {
   changes: Change[];
   notes?: string[];
   fill?: boolean;
+  hedgeSetup?: boolean;
   ixs: (n: Nelta) => Promise<TransactionInstruction[]>;
 }
 
@@ -37,8 +37,6 @@ export type Phase =
   | { kind: "filling"; attempt: number; max: number; set: number; sets: number }
   | { kind: "done"; sig: string }
   | { kind: "failed"; title: string; body: string; nothingChanged: boolean };
-
-export class NoFill extends Error {}
 
 /** Polls rather than subscribes: websocket subscriptions are unreliable on mobile networks. */
 async function nextOracleUpdate(timeoutMs = 6_000): Promise<void> {
@@ -59,11 +57,6 @@ export interface ConnectIssue {
   body: string;
 }
 
-const WALLET_REFUSED = new Set<number>([
-  SolanaMobileWalletAdapterProtocolErrorCode.ERROR_INVALID_PAYLOADS,
-  SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SIGNED,
-]);
-const WALLET_GONE = new Set(["ERROR_SESSION_TIMEOUT", "ERROR_SESSION_CLOSED", "ERROR_ASSOCIATION_CANCELLED"]);
 const CONNECT_TIMEOUT_MS = 20_000;
 
 const WALLET_SILENT: ConnectIssue = {
@@ -82,65 +75,13 @@ function connectIssue(e: unknown): ConnectIssue {
   return { tone: "waiting", title: title === "Something went wrong" ? "Couldn’t connect" : title, body: "Nothing was signed. Try again when you’re ready." };
 }
 
-function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> {
-  const raw = e instanceof Error ? e.message : JSON.stringify(e);
-  if (e instanceof NoFill)
-    return { kind: "failed", title: "Velocity couldn’t fill the order", body: "Your SOL and hedge stayed as they were. Any failed attempts sent to Devnet can still cost network fees. Try later; another attempt isn’t guaranteed to fill.", nothingChanged: true };
-  const code = (e as { code?: unknown } | null)?.code;
-  if (!sent && (WALLET_GONE.has(String(code)) || /session.*(timed? ?out|closed)/i.test(raw)))
-    return {
-      kind: "failed",
-      title: "Your wallet didn’t answer in time",
-      body: "Nothing was signed or sent. Keep your wallet unlocked and Power saving off, then try again.",
-      nothingChanged: true,
-    };
-  if (!sent && String(code) === String(SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED))
-    return {
-      kind: "failed",
-      title: "Your wallet asked to connect again",
-      body: "Nothing was signed or sent. Tap Try again and approve the connection in your wallet first.",
-      nothingChanged: true,
-    };
-  if (!sent && WALLET_REFUSED.has(Number(code)))
-    return {
-      kind: "failed",
-      title: "Your wallet couldn’t send this",
-      body: "Nothing changed. Check your wallet has Devnet SOL for fees and is on Devnet, then try again.",
-      nothingChanged: true,
-    };
-  if (!sent && /declin|reject|cancel|not authori[sz]ed|authorization/i.test(raw))
-    return {
-      kind: "failed",
-      title: "Your wallet didn’t sign",
-      body: "Nothing was signed or sent. If your wallet was locked, open and unlock it first, then try again.",
-      nothingChanged: true,
-    };
-  const custom = /"Custom":(\d+)|custom program error: 0x([0-9a-f]+)/i.exec(raw);
-  if (custom) {
-    const n = custom[1] ? Number(custom[1]) : parseInt(custom[2], 16);
-    const msg = idl.errors.find((x) => x.code === n)?.msg;
-    if (msg) return { kind: "failed", title: "Nelta stopped this", body: `${msg}. The whole transaction was undone; nothing moved except the network fee.`, nothingChanged: true };
-  }
-  if (/429|fetch failed|network|timed? ?out/i.test(raw))
-    return {
-      kind: "failed",
-      title: "Couldn’t reach Devnet",
-      body: sent ? "It may still land. Check Activity before trying again." : "Nothing was sent. Try again in a moment.",
-      nothingChanged: !sent,
-    };
-  return {
-    kind: "failed",
-    title: sent ? "Check the transaction result" : "Couldn’t prepare this transaction",
-    body: sent ? "It may still land. Check Activity before trying again." : "Nothing was sent. Check your connection and try again.",
-    nothingChanged: !sent,
-  };
-}
-
 interface Store {
   owner: PublicKey | null;
   nelta: Nelta | null;
   snap: Snapshot | null;
   readError: string | null;
+  reading: PositionReading | null;
+  lastAttempt: TutorialAttempt | null;
   refresh: () => Promise<void>;
   connecting: boolean;
   connectError: ConnectIssue | null;
@@ -165,24 +106,50 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   const [owner, setOwner] = useState<PublicKey | null>(null);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
+  const [reading, setReading] = useState<PositionReading | null>(null);
+  const [lastAttempt, setLastAttempt] = useState<TutorialAttempt | null>(null);
+  const lastAttemptRef = useRef<TutorialAttempt | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<ConnectIssue | null>(null);
   const [flow, setFlow] = useState<{ plan: Plan; phase: Phase } | null>(null);
   const [version, setVersion] = useState(0);
   const running = useRef(false);
   const attempt = useRef(0);
+  const session = useRef(0);
+  const readSequence = useRef(0);
   const nelta = useMemo(() => (owner ? new Nelta(connection, owner) : null), [owner]);
 
   const refresh = useCallback(async () => {
     if (!nelta) return;
+    const generation = session.current;
+    const sequence = ++readSequence.current;
+    const current = () => generation === session.current && sequence === readSequence.current;
+    const startedAt = Date.now();
     try {
-      setSnap(await nelta.snapshot());
+      const genesis = await connection.getGenesisHash();
+      if (genesis !== DEVNET_GENESIS) throw new Error("WrongNetwork");
+      const recent = lastAttemptRef.current;
+      const resolved = recent?.owner === nelta.owner.toBase58()
+        ? await resolveReceipt(connection, recent, startedAt) : null;
+      if (!current()) return;
+      if (resolved && recent && resolved !== recent) {
+        lastAttemptRef.current = resolved;
+        setLastAttempt(resolved);
+        setFlow((currentFlow) => resolveReceiptFlow(currentFlow, recent, resolved));
+      }
+      const snapshot = await nelta.snapshot(resolved?.slot);
+      if (!current()) return;
+      setSnap(snapshot);
+      setReading({ owner: nelta.owner.toBase58(), network: DEVNET_CHAIN, at: startedAt });
       setReadError(null);
     } catch (e) {
+      if (!current()) return;
       if ((e as Error).name === "InvalidVenueState") setSnap(null);
       setReadError((e as Error).name === "InvalidVenueState"
         ? "Velocity returned an unexpected position. Nelta can’t safely continue; try again"
-        : "Devnet is unavailable. Check your connection and try again");
+        : (e as Error).message === "WrongNetwork"
+          ? "This connection is not Solana Devnet. Switch back to Devnet before continuing"
+          : "Devnet is unavailable. Check your connection and try again");
     }
   }, [nelta]);
 
@@ -198,6 +165,15 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const connectWallet = useCallback(async () => {
+    if (running.current) return;
+    session.current++;
+    setOwner(null);
+    setSnap(null);
+    setReading(null);
+    setReadError(null);
+    setLastAttempt(null);
+    lastAttemptRef.current = null;
+    setFlow(null);
     const id = ++attempt.current;
     const current = () => id === attempt.current;
     setConnecting(true);
@@ -220,9 +196,18 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const disconnectWallet = useCallback(() => {
+    if (running.current) return;
+    session.current++;
+    attempt.current++;
+    setConnecting(false);
     disconnect();
     setOwner(null);
     setSnap(null);
+    setReading(null);
+    setReadError(null);
+    setLastAttempt(null);
+    lastAttemptRef.current = null;
+    setFlow(null);
   }, []);
 
   const propose = useCallback((plan: Plan) => setFlow({ plan, phase: { kind: "preview" } }), []);
@@ -233,9 +218,26 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   const approve = useCallback(async () => {
     if (!flow || !nelta || running.current) return;
     const { plan } = flow;
-    const set = (phase: Phase) => setFlow({ plan, phase });
+    const set = (phase: Phase) => {
+      const previous = lastAttemptRef.current;
+      const sig = phase.kind === "done" || phase.kind === "confirming" ? phase.sig
+        : phase.kind === "venue" || phase.kind === "wallet" ? undefined : previous?.sig;
+      const slot = phase.kind === "venue" || phase.kind === "wallet" ? undefined : previous?.slot;
+      if (phase.kind === "done") readSequence.current++;
+      const next = { owner: nelta.owner.toBase58(), phase, at: Date.now(), fill: !!plan.fill, hedgeSetup: !!plan.hedgeSetup, sig, slot };
+      lastAttemptRef.current = next;
+      setLastAttempt(next);
+      setFlow({ plan, phase });
+    };
     running.current = true;
+    readSequence.current++;
+    lastAttemptRef.current = null;
+    const confirmed = (slot: number) => {
+      const recent = lastAttemptRef.current;
+      if (recent) lastAttemptRef.current = { ...recent, slot };
+    };
     let sent = false;
+    let priorFailedSend = false;
     try {
       let sig: string;
       if (!plan.fill) {
@@ -244,17 +246,17 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
         sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash), { minContextSlot: context.slot }, (v) => { sent = v; });
         sent = true;
         set({ kind: "confirming", sig });
-        const err = await settle(connection, sig, lastValidBlockHeight);
+        const err = await settle(connection, sig, lastValidBlockHeight, confirmed);
         if (err === "expired") throw new Error("network: the transaction expired before it landed");
         if (err) throw new Error(err);
       } else {
         sig = await fillLoop(nelta, plan, set, (v) => {
           sent = v;
-        });
+        }, confirmed, () => { priorFailedSend = true; });
       }
       set({ kind: "done", sig });
     } catch (e) {
-      set(explain(e, sent));
+      set(explain(e, sent, priorFailedSend));
     } finally {
       running.current = false;
       await refresh();
@@ -262,7 +264,7 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
     }
   }, [flow, nelta, refresh]);
 
-  const value: Store = { owner, nelta, snap, readError, refresh, connecting, connectError, connectWallet, disconnectWallet, flow, propose, approve, dismiss, version };
+  const value: Store = { owner, nelta, snap, reading, lastAttempt, readError, refresh, connecting, connectError, connectWallet, disconnectWallet, flow, propose, approve, dismiss, version };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
@@ -297,7 +299,7 @@ async function waitUntilFillable(n: Nelta, plan: Plan): Promise<void> {
  * One wallet approval per try. Each try is settled (landed, or its blockhash expired) before the next is signed, so
  * two tries can never both succeed.
  */
-async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void): Promise<string> {
+async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void, confirmed: (slot: number) => void, failedSend: () => void): Promise<string> {
   for (let attempt = 1; attempt <= FILL_TRIES; attempt++) {
     set({ kind: "venue", attempt });
     await waitUntilFillable(n, plan);
@@ -314,9 +316,11 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
     const sig = "sig" in signed ? signed.sig : await sendWhenFillable(connection, signed.signed, lastValidBlockHeight, nextOracleUpdate, () => setSent(true));
     if (sig === null) continue;
     setSent(true);
-    const err = await settle(connection, sig, lastValidBlockHeight);
+    set({ kind: "confirming", sig });
+    const err = await settle(connection, sig, lastValidBlockHeight, confirmed);
     if (err === null) return sig;
     if (err !== "expired" && !FILL_ERROR.test(err)) throw new Error(err);
+    if (err !== "expired") failedSend();
     setSent(false);
   }
   throw new NoFill("Velocity didn’t fill in time");

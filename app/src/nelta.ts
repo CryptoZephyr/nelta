@@ -224,8 +224,8 @@ function marketAccounts(writable: { quoteSpot?: boolean; solSpot?: boolean; perp
   ];
 }
 
-const uiAmount = async (connection: Connection, ata: PublicKey): Promise<number> => {
-  const info = await connection.getAccountInfo(ata);
+const uiAmount = async (connection: Connection, ata: PublicKey, minContextSlot?: number): Promise<number> => {
+  const info = await connection.getAccountInfo(ata, { commitment: "confirmed", minContextSlot });
   return info ? Number(spl.AccountLayout.decode(info.data).amount) : 0;
 };
 
@@ -248,17 +248,18 @@ export class Nelta {
   vaultToken = (mint: PublicKey) => spl.getAssociatedTokenAddressSync(mint, this.position, true);
   ownerToken = (mint: PublicKey) => spl.getAssociatedTokenAddressSync(mint, this.owner);
 
-  async snapshot(): Promise<Snapshot> {
+  async snapshot(minContextSlot?: number): Promise<Snapshot> {
+    const config = { commitment: "confirmed" as const, minContextSlot };
     const [pos, user, spot, quoteSpot, perp, oracle, walletLamports, walletDusdt, ownerWsol] = await Promise.all([
-      this.connection.getAccountInfo(this.position),
-      this.connection.getAccountInfo(this.venue.velocityUser),
-      this.connection.getAccountInfo(SOL_SPOT_MARKET),
-      this.connection.getAccountInfo(QUOTE_SPOT_MARKET),
-      this.connection.getAccountInfo(SOL_PERP_MARKET),
-      this.connection.getAccountInfo(SOL_ORACLE),
-      this.connection.getBalance(this.owner),
-      uiAmount(this.connection, this.ownerToken(DUSDT_MINT)),
-      uiAmount(this.connection, this.ownerToken(WSOL_MINT)),
+      this.connection.getAccountInfo(this.position, config),
+      this.connection.getAccountInfo(this.venue.velocityUser, config),
+      this.connection.getAccountInfo(SOL_SPOT_MARKET, config),
+      this.connection.getAccountInfo(QUOTE_SPOT_MARKET, config),
+      this.connection.getAccountInfo(SOL_PERP_MARKET, config),
+      this.connection.getAccountInfo(SOL_ORACLE, config),
+      this.connection.getBalance(this.owner, config),
+      uiAmount(this.connection, this.ownerToken(DUSDT_MINT), minContextSlot),
+      uiAmount(this.connection, this.ownerToken(WSOL_MINT), minContextSlot),
     ]);
     const position = pos ? decodePosition(Buffer.from(pos.data)) : null;
     const solLamports = user && spot ? readSpot(user.data, spot.data, 1, 9) : 0n;
