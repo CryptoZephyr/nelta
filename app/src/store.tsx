@@ -1,12 +1,10 @@
 import { Connection, PublicKey, TransactionInstruction, VersionedTransaction } from "@solana/web3.js";
-import { SolanaMobileWalletAdapterProtocolErrorCode } from "@solana-mobile/mobile-wallet-adapter-protocol";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Nelta, RPC, Snapshot, SOL_ORACLE } from "./nelta";
-import idl from "./nelta.json";
 import { Tone } from "./theme";
 import { connect, disconnect, signAndSend, signForFill } from "./wallet";
 import { resolveReceipt, resolveReceiptFlow, settle } from "./confirmation";
-import { FILL_ERROR, sendWhenFillable } from "./fill";
+import { explain, FILL_ERROR, NoFill, sendWhenFillable } from "./fill";
 import { DEVNET_CHAIN, DEVNET_GENESIS, PositionReading, TutorialAttempt } from "./tutorial";
 
 export const connection = new Connection(RPC, "confirmed");
@@ -40,8 +38,6 @@ export type Phase =
   | { kind: "done"; sig: string }
   | { kind: "failed"; title: string; body: string; nothingChanged: boolean };
 
-export class NoFill extends Error {}
-
 /** Polls rather than subscribes: websocket subscriptions are unreliable on mobile networks. */
 async function nextOracleUpdate(timeoutMs = 6_000): Promise<void> {
   const read = async () => (await connection.getAccountInfo(SOL_ORACLE, "processed").catch(() => null))?.data;
@@ -61,11 +57,6 @@ export interface ConnectIssue {
   body: string;
 }
 
-const WALLET_REFUSED = new Set<number>([
-  SolanaMobileWalletAdapterProtocolErrorCode.ERROR_INVALID_PAYLOADS,
-  SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SIGNED,
-]);
-const WALLET_GONE = new Set(["ERROR_SESSION_TIMEOUT", "ERROR_SESSION_CLOSED", "ERROR_ASSOCIATION_CANCELLED"]);
 const CONNECT_TIMEOUT_MS = 20_000;
 
 const WALLET_SILENT: ConnectIssue = {
@@ -82,60 +73,6 @@ function connectIssue(e: unknown): ConnectIssue {
   if (/cluster|chain/i.test(raw) && /support|mismatch|invalid|unknown/i.test(raw)) return WALLET_SILENT;
   const { title } = explain(e, false);
   return { tone: "waiting", title: title === "Something went wrong" ? "Couldn’t connect" : title, body: "Nothing was signed. Try again when you’re ready." };
-}
-
-function explain(e: unknown, sent: boolean): Extract<Phase, { kind: "failed" }> {
-  const raw = e instanceof Error ? e.message : JSON.stringify(e);
-  if (e instanceof NoFill)
-    return { kind: "failed", title: "Velocity couldn’t fill the order", body: "Your SOL and hedge stayed as they were. Any failed attempts sent to Devnet can still cost network fees. Try later; another attempt isn’t guaranteed to fill.", nothingChanged: true };
-  const code = (e as { code?: unknown } | null)?.code;
-  if (!sent && (WALLET_GONE.has(String(code)) || /session.*(timed? ?out|closed)/i.test(raw)))
-    return {
-      kind: "failed",
-      title: "Your wallet didn’t answer in time",
-      body: "Nothing was signed or sent. Keep your wallet unlocked and Power saving off, then try again.",
-      nothingChanged: true,
-    };
-  if (!sent && String(code) === String(SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED))
-    return {
-      kind: "failed",
-      title: "Your wallet asked to connect again",
-      body: "Nothing was signed or sent. Tap Try again and approve the connection in your wallet first.",
-      nothingChanged: true,
-    };
-  if (!sent && WALLET_REFUSED.has(Number(code)))
-    return {
-      kind: "failed",
-      title: "Your wallet couldn’t send this",
-      body: "Nothing changed. Check your wallet has Devnet SOL for fees and is on Devnet, then try again.",
-      nothingChanged: true,
-    };
-  if (!sent && /declin|reject|cancel|not authori[sz]ed|authorization/i.test(raw))
-    return {
-      kind: "failed",
-      title: "Your wallet didn’t sign",
-      body: "Nothing was signed or sent. If your wallet was locked, open and unlock it first, then try again.",
-      nothingChanged: true,
-    };
-  const custom = /"Custom":(\d+)|custom program error: 0x([0-9a-f]+)/i.exec(raw);
-  if (custom) {
-    const n = custom[1] ? Number(custom[1]) : parseInt(custom[2], 16);
-    const msg = idl.errors.find((x) => x.code === n)?.msg;
-    if (msg) return { kind: "failed", title: "Nelta stopped this", body: `${msg}. The whole transaction was undone; nothing moved except the network fee.`, nothingChanged: true };
-  }
-  if (/429|fetch failed|network|timed? ?out/i.test(raw))
-    return {
-      kind: "failed",
-      title: "Couldn’t reach Devnet",
-      body: sent ? "It may still land. Check Activity before trying again." : "Nothing was sent. Try again in a moment.",
-      nothingChanged: !sent,
-    };
-  return {
-    kind: "failed",
-    title: sent ? "Check the transaction result" : "Couldn’t prepare this transaction",
-    body: sent ? "It may still land. Check Activity before trying again." : "Nothing was sent. Check your connection and try again.",
-    nothingChanged: !sent,
-  };
 }
 
 interface Store {
@@ -300,6 +237,7 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       if (recent) lastAttemptRef.current = { ...recent, slot };
     };
     let sent = false;
+    let priorFailedSend = false;
     try {
       let sig: string;
       if (!plan.fill) {
@@ -314,11 +252,11 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       } else {
         sig = await fillLoop(nelta, plan, set, (v) => {
           sent = v;
-        }, confirmed);
+        }, confirmed, () => { priorFailedSend = true; });
       }
       set({ kind: "done", sig });
     } catch (e) {
-      set(explain(e, sent));
+      set(explain(e, sent, priorFailedSend));
     } finally {
       running.current = false;
       await refresh();
@@ -361,7 +299,7 @@ async function waitUntilFillable(n: Nelta, plan: Plan): Promise<void> {
  * One wallet approval per try. Each try is settled (landed, or its blockhash expired) before the next is signed, so
  * two tries can never both succeed.
  */
-async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void, confirmed: (slot: number) => void): Promise<string> {
+async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void, confirmed: (slot: number) => void, failedSend: () => void): Promise<string> {
   for (let attempt = 1; attempt <= FILL_TRIES; attempt++) {
     set({ kind: "venue", attempt });
     await waitUntilFillable(n, plan);
@@ -382,6 +320,7 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
     const err = await settle(connection, sig, lastValidBlockHeight, confirmed);
     if (err === null) return sig;
     if (err !== "expired" && !FILL_ERROR.test(err)) throw new Error(err);
+    if (err !== "expired") failedSend();
     setSent(false);
   }
   throw new NoFill("Velocity didn’t fill in time");
