@@ -1,8 +1,8 @@
 # Nelta
 
-**Nelta keeps your SOL and its hedge together.** Protect your SOL against a price drop, and take SOL out without your protection going wrong.
+**Nelta keeps your deposited Solana and its hedge together.** Take Solana out and reduce the short by the matching amount in one transaction.
 
-Download: [nelta.apk (Android, 1.3.2)](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.2/nelta.apk) · [Release notes](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.2) · Video: [Watch the demo](https://youtu.be/AL-gIJ87bSA?si=LFK-Uo-otsmTxdVu) · Docs: this README and [Devnet evidence](docs/devnet-evidence.md) · Built for: Solana Mobile CLOCK IN
+Download: [nelta.apk (Android, 1.3.3)](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.3/nelta.apk) · [Release notes](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.3) · Video: [Watch the demo](https://youtu.be/AL-gIJ87bSA?si=LFK-Uo-otsmTxdVu) · Docs: this README and [Devnet evidence](docs/devnet-evidence.md) · Built for: Solana Mobile CLOCK IN
 
 ![Nelta on Android: welcome, change hedge, waiting for a fill, done](docs/img/screens.png)
 
@@ -72,22 +72,32 @@ flowchart LR
 
 ## Try it on Android
 
-1. On an Android phone, download [nelta.apk 1.3.2](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.2/nelta.apk) and install over your existing Nelta without uninstalling. If Chrome stalls at 100%, use Samsung Internet or Firefox.
+1. On an Android phone, download [nelta.apk 1.3.3](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.3/nelta.apk) and install over your existing Nelta without uninstalling. If Chrome stalls at 100%, use Samsung Internet or Firefox.
 2. In Phantom: **Settings → Developer settings → Testnet mode → Solana Devnet**. Turn off Android **Power saving**, and unlock Phantom before you approve.
 3. Get some free Devnet SOL from the [faucet](https://faucet.solana.com) (about 0.2 SOL is plenty).
-4. Open Nelta, tap **Connect wallet**, and follow the steps on Home: create position → get test dUSDT (Nelta mints it for you) → add the SOL amount you choose → sync hedge. Adding SOL doesn't give you dUSDT or open a hedge. Each confirmed transaction shows "Confirmed on Devnet" with an Explorer link.
+4. Open Nelta, tap **Connect wallet**, and follow the guide: create position → get test dUSDT (Nelta mints it for you) → add the Solana amount you choose → choose a percentage → **Sync hedge**. Adding Solana doesn't give you dUSDT or open a hedge. Each confirmed transaction shows "Confirmed on Devnet" with an Explorer link. Existing positions skip completed setup; you can skip the guide or restart it from **Help**.
 5. During Sync hedge, expect **Waiting for Velocity** before a wallet prompt. Devnet fills can take time, require several approvals or fail completely. If you see **Check before retrying**, check Activity first.
 
 No phone? Earlier successful runs have transaction links in [docs/devnet-evidence.md](docs/devnet-evidence.md). The latest audit's results and limits are summarized below.
 
-## What's new in 1.3.2
+## What's new in 1.3.3
+
+- **Guidance beside the action.** The five-step tutorial explains Solana Devnet, collateral, deposits, hedge percentage and Sync hedge on the existing screens. Collateral supports the short; deposited Solana is the amount you hold.
+- **Progress follows confirmed state.** A funded position stays unhedged until the actual short matches the selected, rounded target after confirmation and a fresh reading. Failed fills stay incomplete; uncertain results direct you to the receipt before retrying.
+- **Returning users keep their position.** The guide recognizes existing collateral, custody and matching hedges. Skip is remembered locally; Help restarts guidance. Completion and Release/Rule introductions are saved per wallet and network.
+- **Release and Rule get a short introduction.** Releases reduce custody and the short together. An approved one-use rule can run while the app is closed, subject to its conditions, fresh prices and a successful fill.
+- **Receipt and retry messages stay accurate.** Resolved receipts do not freeze later balance reads or leave an outdated transaction sheet. Failed Release does not hide a matching hedge, and later unsent retries retain earlier failed-send fee warnings.
+
+The signed review APK was exercised on an Android emulator with a fake wallet and real Devnet transactions. **Velocity still rejected the hedge, and the 1.3.3 tutorial has not been tested with Phantom or Solflare on a physical phone.** See [Evidence](#evidence).
+
+### Previous update: 1.3.2
 
 - **Clearer setup.** Get test dUSDT first, then add the SOL amount you choose. Funds takes you back to Home so you can sync the hedge.
 - **The target and the actual hedge are clearer.** Home explains what your percentage aims to offset. If a small deposit rounds below Velocity's trade size, setup stays incomplete and suggests adding SOL or choosing a higher percentage.
 - **A zero target doesn't hide an open short.** Recovery can leave a close order waiting. Home says the short is still open until its actual size reaches zero.
 - **More honest waiting and error messages.** A successful market check doesn't guarantee a fill. Failed transactions sent to Devnet can cost a fee. Keeper check-ins don't guarantee a rule will execute, and a stale price doesn't stop an open short from following the market.
 
-The APK's version, signature and existing signing lineage were verified. **This polish has not been exercised on an Android emulator or a real phone.** Real-wallet compatibility and reliable Velocity fills remain open checks; see [Evidence](#evidence).
+The 1.3.2 release pass verified its APK's version, signature and existing signing lineage but did not include a new Android UI run. The current tutorial checks are below; reliable Velocity fills remain an open check.
 
 ### Previous update: 1.3.1
 
@@ -107,11 +117,22 @@ The latest audit did **not** complete the full hedge flow: Velocity rejected the
 | Nelta program (Devnet) | `9Rk99npYk6kwtEx7MVuq2SWyr1WQQ7f9S9i8mXY4iJ4R` |
 | Velocity program (Devnet) | `vELoC1audYbSYVRXn1vPaV8Axoa9oU6BYmNGZZBDZ1P` |
 | Hosted keeper | GitHub Actions ([keeper.yml](.github/workflows/keeper.yml)), fee-payer `7kCrKbJ9hAjLFdY26HY5asutdJ4XYadZKajYbu1diqTx` |
-| Android app | [1.3.2 on GitHub Releases](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.2), package `xyz.nelta.app`, version code `6`. The app shows an "Update" banner when a new version is out |
+| Android app | [1.3.3 on GitHub Releases](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.3), package `xyz.nelta.app`, version code `7`. The app shows an "Update" banner when a new version is out |
 
 There is **no separate API server or central database**. The app reads Solana directly through RPC, the program enforces custody and permissions, and GitHub Actions hosts the keeper.
 
 ## Evidence
+
+### Tutorial checks: 1.3.3, 11 October 2026
+
+- **Published APK:** [1.3.3](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.3/nelta.apk), version code **7**, package `xyz.nelta.app`. [The release workflow](https://github.com/CryptoZephyr/nelta/actions/runs/38141674028) built merged commit [f0770e8](https://github.com/CryptoZephyr/nelta/commit/f0770e88a93884c12646c28a7dd85507a2716633). The anonymous download's SHA-256 matches GitHub's asset digest: `16eef407b44a69b8fc83bf345852a17d0cb9bf4563965f4d1ffda4f4dd8c6d6b`. Its existing release certificate and signing lineage were verified; its app source matches the review build below.
+- **Passed:** all **55 app tests**, typecheck, lint and `git diff --check`, plus [app, program and scripts CI](https://github.com/CryptoZephyr/nelta/pull/26/checks). Focused tests cover confirmed hedge progress, target rounding, failed/uncertain fills, stale reads, wallet/network changes, local preferences, receipt recovery and unchanged failed Releases.
+- **Signed review APK:** [run20](https://github.com/CryptoZephyr/nelta/actions/runs/38138886626) built source `2ee15b692a49bc35bad44cc026c32ff10ba26a2f` as **1.3.3-test.20**, version code **7**. Its SHA-256 is `579d325ea167280a79efd4b1e88470df96caab372acfa19f09278f9bfe382765`; the certificate and signing lineage match the existing release. It update-installed on an API 35 emulator without clearing preferences.
+- **Passed in that APK:** returning-user progress, skip/relaunch, Help restart, Release/Rule introduction persistence, wallet isolation, offline pause/recovery, Activity receipts and the corrected warning after a failed send followed by an unsigned retry. The earlier signed run19 exercised fresh position creation, test collateral and a Solana deposit; those deposits were not repeated in run20.
+- **Failed to fill:** [the Sync transaction](https://explorer.solana.com/tx/3znrirwC3SLEWVbYsdYaGj2A6nwEX7zqStacPS4eJ5xRYPgPgmmWCLf1xJKjWWxGoqBisUWupZwZ3fjnGQzxFUfS?cluster=devnet) failed with Velocity **6289** and cost a network fee. Custody and the short were unchanged; setup stayed incomplete and the position remained unhedged.
+- **Still untested in this APK:** successful hedge completion and hedge-and-exit, failed Release from an already matching hedge, genuinely uncertain receipt recovery, wrong-network responses, delayed-read races and physical-phone Phantom/Solflare. Unit tests cover several of these states; they are not equivalent to exercising them in the app.
+
+Nelta has also been tested on a real Android phone in earlier builds. The tutorial checks above use an emulator and fake wallet; they do not establish physical-wallet behavior for 1.3.3. See [the tutorial changes and screenshots](https://github.com/CryptoZephyr/nelta/pull/26).
 
 ### Release checks: 1.3.2, 10 October 2026
 
@@ -121,7 +142,7 @@ There is **no separate API server or central database**. The app reads Solana di
 
 See [the polish changes](https://github.com/CryptoZephyr/nelta/pull/25) and [release notes](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.2).
 
-### Latest functional audit: 7–8 October 2026
+### Earlier functional audit: 7–8 October 2026
 
 The fixes in 1.3.1 were exercised in signed test builds **test.13** and **test.15**, using an Android emulator and the Solana Mobile test wallet. These results are not proof that real Phantom or Solflare passed.
 
@@ -230,16 +251,15 @@ npx expo run:android
 
 - **Devnet only, with test funds.** A functional and code audit has been performed; no independent security audit has been done.
 - **Fills are not guaranteed.** Waiting before approval reduces unnecessary prompts, but Velocity can become unfillable before the trade lands. A hedge action can still exhaust ten approvals. Failed transactions leave your position unchanged but can cost network fees.
-- **Newest real-wallet compatibility remains unverified.** Phantom and Solflare need testing on a real phone with this release.
-- **1.3.2's polish has build and unit-test evidence only.** It hasn't had a new Android UI or hedge-and-exit run.
+- **The 1.3.3 tutorial's real-wallet compatibility remains unverified.** Its walkthrough used an emulator and fake wallet. Earlier real-phone testing does not verify this tutorial build.
+- **The latest full hedge-and-exit remains unproven.** Velocity rejected the hedge; matching-hedge completion, exits and uncertain-receipt recovery were not exercised in the tutorial APK.
 - **Keeper uptime:** the free GitHub Actions keeper has short gaps of a few minutes between runs.
 - **You connect your wallet again each time you open the app.**
 - **Android only.** The APK is installed directly, not from a store.
-- **No demo video yet.**
 
 ## Roadmap
 
-- Demo video and a 5-person user test.
+- A five-person user test.
 - Solana dApp Store listing.
 - Several rules per position (today: one at a time).
 
