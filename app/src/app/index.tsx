@@ -1,4 +1,4 @@
-import { Redirect } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Animated, Easing, ScrollView, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -6,6 +6,7 @@ import { Icon, IconName, Mark } from "../icons";
 import { useNelta } from "../store";
 import { color, radius, space, tone } from "../theme";
 import { Button, Notice, Pill, T } from "../ui";
+import { TutorialCard } from "../tutorial-ui";
 
 const ease = Easing.out(Easing.cubic);
 
@@ -84,6 +85,7 @@ const POINTS: { icon: IconName; title: string; body: string }[] = [
 export default function Welcome() {
   const { owner, connectWallet, connecting, connectError } = useNelta();
   const story = useStory();
+  const router = useRouter();
   if (owner) return <Redirect href="/home" />;
   return (
     <SafeAreaView style={w.root}>
@@ -112,9 +114,11 @@ export default function Welcome() {
         </View>
       </View>
       <Animated.View style={rise(story.cta, 8)}>
+        <TutorialCard screen="welcome" />
         {connectError && <Notice tone={connectError.tone} title={connectError.title} body={connectError.body} />}
         <Button label={connecting ? "Waiting for your wallet…" : "Connect wallet"} icon="wallet" loading={connecting} onPress={() => void connectWallet()} />
         <T v="caption" style={{ textAlign: "center", marginTop: space.md }}>Using Phantom? Turn on Settings → Developer settings → Testnet mode → Solana Devnet first, turn off Power saving, and unlock Phantom before you approve.</T>
+        <Button label="Help" kind="quiet" onPress={() => router.push("/help")} />
       </Animated.View>
       </ScrollView>
     </SafeAreaView>

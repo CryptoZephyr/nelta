@@ -8,6 +8,7 @@ import { useNelta } from "../store";
 import { color, space, tone } from "../theme";
 import { PositionGate } from "../gate";
 import { Button, Card, Field, Notice, Pill, Row, Screen, T } from "../ui";
+import { TutorialCard } from "../tutorial-ui";
 
 const FEE_BUFFER = 0.01 * LAMPORTS;
 
@@ -25,6 +26,7 @@ export default function Funds() {
   return (
     <Screen>
       <T v="h1">Add funds</T>
+      <TutorialCard screen="funds" />
       <T v="body" style={{ color: color.textMuted }}>First add free test dUSDT to back your hedge. Then add the SOL amount you choose. Depositing SOL doesn’t give you dUSDT.</T>
 
       <Card style={needsCollateral ? { borderColor: color.brand } : null}>

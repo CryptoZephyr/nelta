@@ -10,6 +10,7 @@ import { FlowSheet } from "../sheet";
 import { NeltaProvider } from "../store";
 import { color, font } from "../theme";
 import { UpdateBanner } from "../update";
+import { TutorialProvider } from "../tutorial-ui";
 
 export default function RootLayout() {
   const [loaded] = useFonts({ InstrumentSerif_400Regular, Inter_400Regular, Inter_500Medium, Inter_600SemiBold, JetBrainsMono_400Regular });
@@ -17,26 +18,29 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <NeltaProvider>
-        <StatusBar style="dark" />
-        <View style={{ flex: 1, backgroundColor: color.bg }}>
-          <UpdateBanner />
-          <Stack
-            screenOptions={{
-              headerShadowVisible: false,
-              headerStyle: { backgroundColor: color.bg },
-              headerTitleStyle: { fontFamily: font.semibold, color: color.text },
-              headerTintColor: color.brand,
-              contentStyle: { backgroundColor: color.bg },
-            }}
-          >
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="release" options={{ title: "Release now" }} />
-            <Stack.Screen name="funds" options={{ title: "Add funds" }} />
-            <Stack.Screen name="recovery" options={{ title: "Recovery" }} />
-          </Stack>
-        </View>
-        <FlowSheet />
+        <TutorialProvider>
+          <StatusBar style="dark" />
+          <View style={{ flex: 1, backgroundColor: color.bg }}>
+            <UpdateBanner />
+            <Stack
+              screenOptions={{
+                headerShadowVisible: false,
+                headerStyle: { backgroundColor: color.bg },
+                headerTitleStyle: { fontFamily: font.semibold, color: color.text },
+                headerTintColor: color.brand,
+                contentStyle: { backgroundColor: color.bg },
+              }}
+            >
+              <Stack.Screen name="index" options={{ headerShown: false }} />
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="release" options={{ title: "Release now" }} />
+              <Stack.Screen name="funds" options={{ title: "Add funds" }} />
+              <Stack.Screen name="recovery" options={{ title: "Recovery" }} />
+              <Stack.Screen name="help" options={{ title: "Help" }} />
+            </Stack>
+          </View>
+          <FlowSheet />
+        </TutorialProvider>
       </NeltaProvider>
     </SafeAreaProvider>
   );

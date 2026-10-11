@@ -2,9 +2,9 @@ import { SolanaMobileWalletAdapterProtocolErrorCode, SolanaSignTransactions } fr
 import { transact, Web3MobileWallet } from "@solana-mobile/mobile-wallet-adapter-protocol-web3js";
 import { PublicKey, Transaction } from "@solana/web3.js";
 import { submitToWallet, walletErrorCode } from "./submission";
+import { acceptsDevnet, DEVNET_CHAIN } from "./tutorial";
 
 const IDENTITY = { name: "Nelta", uri: "https://github.com/CryptoZephyr/nelta/", icon: "raw/main/app/assets/icon.png" };
-const CHAIN = "solana:devnet";
 let authToken: string | undefined;
 
 function isAuthorizationFailure(e: unknown): boolean {
@@ -13,7 +13,7 @@ function isAuthorizationFailure(e: unknown): boolean {
 
 /** Reuses the cached token; if the wallet rejects it (expired or revoked), drops it and asks for a fresh authorization once. */
 async function authorize(wallet: Web3MobileWallet): Promise<PublicKey> {
-  const request = (auth_token?: string) => wallet.authorize({ chain: CHAIN, identity: IDENTITY, auth_token });
+  const request = (auth_token?: string) => wallet.authorize({ chain: DEVNET_CHAIN, identity: IDENTITY, auth_token });
   let auth;
   try {
     auth = await request(authToken);
@@ -23,6 +23,10 @@ async function authorize(wallet: Web3MobileWallet): Promise<PublicKey> {
     auth = await request();
   }
   authToken = auth.auth_token;
+  if (!acceptsDevnet(auth.accounts[0].chains)) {
+    authToken = undefined;
+    throw new Error("Wallet chain mismatch: Solana Devnet is required");
+  }
   return new PublicKey(Buffer.from(auth.accounts[0].address, "base64"));
 }
 

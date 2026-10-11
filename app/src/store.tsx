@@ -7,6 +7,7 @@ import { Tone } from "./theme";
 import { connect, disconnect, signAndSend, signForFill } from "./wallet";
 import { settle } from "./confirmation";
 import { FILL_ERROR, sendWhenFillable } from "./fill";
+import { DEVNET_CHAIN, DEVNET_GENESIS, PositionReading, TutorialAttempt } from "./tutorial";
 
 export const connection = new Connection(RPC, "confirmed");
 const FILL_TRIES = 10;
@@ -141,6 +142,8 @@ interface Store {
   nelta: Nelta | null;
   snap: Snapshot | null;
   readError: string | null;
+  reading: PositionReading | null;
+  lastAttempt: TutorialAttempt | null;
   refresh: () => Promise<void>;
   connecting: boolean;
   connectError: ConnectIssue | null;
@@ -165,24 +168,59 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   const [owner, setOwner] = useState<PublicKey | null>(null);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
+  const [reading, setReading] = useState<PositionReading | null>(null);
+  const [lastAttempt, setLastAttempt] = useState<TutorialAttempt | null>(null);
+  const lastAttemptRef = useRef<TutorialAttempt | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<ConnectIssue | null>(null);
   const [flow, setFlow] = useState<{ plan: Plan; phase: Phase } | null>(null);
   const [version, setVersion] = useState(0);
   const running = useRef(false);
   const attempt = useRef(0);
+  const session = useRef(0);
+  const readSequence = useRef(0);
   const nelta = useMemo(() => (owner ? new Nelta(connection, owner) : null), [owner]);
 
   const refresh = useCallback(async () => {
     if (!nelta) return;
+    const generation = session.current;
+    const sequence = ++readSequence.current;
+    const current = () => generation === session.current && sequence === readSequence.current;
+    const startedAt = Date.now();
     try {
-      setSnap(await nelta.snapshot());
+      const genesis = await connection.getGenesisHash();
+      if (genesis !== DEVNET_GENESIS) throw new Error("WrongNetwork");
+      const recent = lastAttemptRef.current;
+      let minContextSlot: number | undefined;
+      if (recent?.sig && recent.owner === nelta.owner.toBase58()) {
+        const status = (await connection.getSignatureStatuses([recent.sig], { searchTransactionHistory: true })).value[0];
+        if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) {
+          minContextSlot = status.slot;
+          if (recent.phase.kind === "failed" && !recent.phase.nothingChanged && current()) {
+            const phase: Phase = status.err
+              ? { kind: "failed", title: "Transaction failed", body: "The confirmed receipt shows that the transaction failed. Your position is unchanged except for fees.", nothingChanged: true }
+              : { kind: "done", sig: recent.sig };
+            const resolved = { ...recent, phase, at: startedAt - 1 };
+            lastAttemptRef.current = resolved;
+            setLastAttempt(resolved);
+          }
+        } else if (recent.phase.kind === "done") {
+          throw new Error("Receipt unavailable");
+        }
+      }
+      const snapshot = await nelta.snapshot(minContextSlot);
+      if (!current()) return;
+      setSnap(snapshot);
+      setReading({ owner: nelta.owner.toBase58(), network: DEVNET_CHAIN, at: startedAt });
       setReadError(null);
     } catch (e) {
+      if (!current()) return;
       if ((e as Error).name === "InvalidVenueState") setSnap(null);
       setReadError((e as Error).name === "InvalidVenueState"
         ? "Velocity returned an unexpected position. Nelta can’t safely continue; try again"
-        : "Devnet is unavailable. Check your connection and try again");
+        : (e as Error).message === "WrongNetwork"
+          ? "This connection is not Solana Devnet. Switch back to Devnet before continuing"
+          : "Devnet is unavailable. Check your connection and try again");
     }
   }, [nelta]);
 
@@ -198,6 +236,15 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const connectWallet = useCallback(async () => {
+    if (running.current) return;
+    session.current++;
+    setOwner(null);
+    setSnap(null);
+    setReading(null);
+    setReadError(null);
+    setLastAttempt(null);
+    lastAttemptRef.current = null;
+    setFlow(null);
     const id = ++attempt.current;
     const current = () => id === attempt.current;
     setConnecting(true);
@@ -220,9 +267,18 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const disconnectWallet = useCallback(() => {
+    if (running.current) return;
+    session.current++;
+    attempt.current++;
+    setConnecting(false);
     disconnect();
     setOwner(null);
     setSnap(null);
+    setReading(null);
+    setReadError(null);
+    setLastAttempt(null);
+    lastAttemptRef.current = null;
+    setFlow(null);
   }, []);
 
   const propose = useCallback((plan: Plan) => setFlow({ plan, phase: { kind: "preview" } }), []);
@@ -233,8 +289,19 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
   const approve = useCallback(async () => {
     if (!flow || !nelta || running.current) return;
     const { plan } = flow;
-    const set = (phase: Phase) => setFlow({ plan, phase });
+    const set = (phase: Phase) => {
+      const previous = lastAttemptRef.current;
+      const sig = phase.kind === "done" || phase.kind === "confirming" ? phase.sig
+        : phase.kind === "venue" || phase.kind === "wallet" ? undefined : previous?.sig;
+      if (phase.kind === "done") readSequence.current++;
+      const next = { owner: nelta.owner.toBase58(), phase, at: Date.now(), fill: !!plan.fill, sig };
+      lastAttemptRef.current = next;
+      setLastAttempt(next);
+      setFlow({ plan, phase });
+    };
     running.current = true;
+    readSequence.current++;
+    lastAttemptRef.current = null;
     let sent = false;
     try {
       let sig: string;
@@ -262,7 +329,7 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
     }
   }, [flow, nelta, refresh]);
 
-  const value: Store = { owner, nelta, snap, readError, refresh, connecting, connectError, connectWallet, disconnectWallet, flow, propose, approve, dismiss, version };
+  const value: Store = { owner, nelta, snap, reading, lastAttempt, readError, refresh, connecting, connectError, connectWallet, disconnectWallet, flow, propose, approve, dismiss, version };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
@@ -314,6 +381,7 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
     const sig = "sig" in signed ? signed.sig : await sendWhenFillable(connection, signed.signed, lastValidBlockHeight, nextOracleUpdate, () => setSent(true));
     if (sig === null) continue;
     setSent(true);
+    set({ kind: "confirming", sig });
     const err = await settle(connection, sig, lastValidBlockHeight);
     if (err === null) return sig;
     if (err !== "expired" && !FILL_ERROR.test(err)) throw new Error(err);

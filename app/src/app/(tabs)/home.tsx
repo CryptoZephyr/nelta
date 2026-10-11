@@ -11,6 +11,7 @@ import { useNow } from "../../now";
 import { connection, useNelta } from "../../store";
 import { color, font, space, tone } from "../../theme";
 import { Button, Card, ErrorState, HedgeExplanation, Loading, Notice, Pair, Pill, Row, Segmented, Screen, StalePriceNotice, T } from "../../ui";
+import { HedgeTutorial, TutorialCard, useTutorial } from "../../tutorial-ui";
 
 function useKeeper(): KeeperStatus | null {
   const [k, setK] = useState<KeeperStatus | null>(null);
@@ -52,6 +53,7 @@ function RatioCard({ snap, fresh }: { snap: Snapshot; fresh: boolean }) {
       <T v="caption" style={{ marginTop: space.xs }}>Choose how much of your SOL’s price change to offset. Saved target: {current}%.</T>
       <Segmented options={[25, 50, 75, 100].map((v) => ({ value: v, label: `${v}%` }))} value={ratio} onChange={setRatio} />
       <HedgeExplanation ratioPct={ratio} shortBase={snap.shortBase} />
+      <HedgeTutorial ratioPct={ratio} />
       <Button label="Review change" kind="secondary" disabled={ratio === current || !fresh} onPress={() => propose(plans.changeRatio(snap, ratio * 100))} />
     </Card>
   );
@@ -75,6 +77,8 @@ function Setup() {
 }
 
 function SetupSteps({ snap }: { snap: Snapshot }) {
+  const { ready, prefs, scope } = useTutorial();
+  if (!ready || (!prefs.skipped && !prefs.scopes[scope]?.complete)) return null;
   const steps = [
     { done: true, label: "Create your position" },
     { done: snap.collateralBase > 0n, label: "Get dUSDT collateral for the short" },
@@ -144,6 +148,7 @@ export default function Home() {
     return (
       <Screen refresh={refreshControl}>
         <Header />
+        <TutorialCard screen="home" />
         {readError ? <ErrorState title="Couldn’t read Devnet" body={`${readError}. Your funds aren’t affected.`} onRetry={() => void onPull()} retrying={pulling} /> : <Loading label="Reading your position from Devnet…" />}
       </Screen>
     );
@@ -153,6 +158,7 @@ export default function Home() {
     return (
       <Screen refresh={refreshControl}>
         <Header />
+        <TutorialCard screen="home" />
         <Setup />
       </Screen>
     );
@@ -187,6 +193,7 @@ export default function Home() {
   return (
     <Screen refresh={refreshControl} footer={primary}>
       <Header />
+      <TutorialCard screen="home" />
       {readError && <Notice tone="waiting" title="Showing the last reading" body="Devnet is slow to answer. Pull down to refresh." />}
       {!fresh && <StalePriceNotice ageSecs={snap.oracleAgeSecs} />}
       {liquidating ? (
