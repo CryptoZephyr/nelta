@@ -64,6 +64,7 @@ export const syncHedge = (snap: Snapshot): Plan => ({
   changes: [{ label: "SOL-PERP short", from: `${sol(snap.shortBase)} SOL`, to: `${sol(snap.targetShort)} SOL` }],
   notes: ["Velocity must fill the whole order. Nelta checks before opening your wallet, but the market can change during approval. An unfilled try leaves the position unchanged; a sent failed transaction can still cost a network fee."],
   fill: true,
+  hedgeSetup: true,
   ixs: (n) => n.rebalanceIxs(),
 });
 
@@ -78,6 +79,7 @@ export const changeRatio = (snap: Snapshot, ratioBps: number): Plan => {
     ],
     notes: [ATOMIC],
     fill: to !== snap.shortBase,
+    hedgeSetup: ratioBps > 0,
     ixs: async (n) => [...(await n.setRatioIxs(ratioBps)), ...(await n.rebalanceIxs())],
   };
 };

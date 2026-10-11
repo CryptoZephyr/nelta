@@ -17,7 +17,9 @@ export interface TutorialAttempt {
   phase: Phase;
   at: number;
   fill: boolean;
+  hedgeSetup: boolean;
   sig?: string;
+  slot?: number;
 }
 
 export interface TutorialInput {
@@ -69,7 +71,7 @@ export function tutorialProgress(input: TutorialInput) {
 
   const position = snap.position;
   const target = position && snap.step > 0n ? targetShort(snap.solLamports, position.ratioBps, snap.step) : 0n;
-  const failedFill = attempt?.fill && phase?.kind === "failed";
+  const failedFill = attempt?.fill && attempt.hedgeSetup && phase?.kind === "failed";
   const complete = !!position && snap.solLamports > 0n && target > 0n &&
     snap.targetShort === target && snap.shortBase === target && !snap.venueStatus.liquidating && !failedFill;
   const facts = [

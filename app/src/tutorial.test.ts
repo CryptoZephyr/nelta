@@ -95,7 +95,7 @@ test("wallet approval, fill waiting and confirmation without a subsequent readin
     { kind: "confirming" as const, sig: "sig" },
     { kind: "done" as const, sig: "sig" },
   ]) {
-    state.attempt = { owner, at: now, fill: true, phase };
+    state.attempt = { owner, at: now, fill: true, hedgeSetup: true, phase };
     assert.equal(tutorialProgress(state).complete, false);
   }
   state.reading!.at = now;
@@ -107,7 +107,7 @@ test("wallet approval, fill waiting and confirmation without a subsequent readin
 test("failed fills and declined wallets leave the relevant step incomplete and keep their real message", () => {
   const state = input(funded());
   state.attempt = {
-    owner, at: now - 2000, fill: true,
+    owner, at: now - 2000, fill: true, hedgeSetup: true,
     phase: { kind: "failed", title: "Velocity couldn’t fill the order", body: "The short hasn’t opened or changed.", nothingChanged: true },
   };
   assert.equal(tutorialProgress(state).complete, false);
@@ -121,13 +121,30 @@ test("failed fills and declined wallets leave the relevant step incomplete and k
 test("uncertain transactions remain incomplete even if a reading looks matched, including after closing the sheet", () => {
   const state = input(funded(36_500_000n));
   state.attempt = {
-    owner, at: now - 2000, fill: true, sig: "sig",
+    owner, at: now - 2000, fill: true, hedgeSetup: true, sig: "sig",
     phase: { kind: "failed", title: "Check before retrying", body: "Unknown", nothingChanged: false },
   };
   assert.equal(tutorialProgress(state).complete, false);
   assert.match(tutorialProgress(state).body, /receipt in Activity/);
   state.attempt.phase = { kind: "done", sig: "sig" };
   assert.equal(tutorialProgress(state).complete, true, "a confirmed receipt plus the subsequent matching reading resolves uncertainty");
+});
+
+test("a failed release cannot hide an existing matching hedge; a failed setup fill stays incomplete", () => {
+  const state = input(funded(36_500_000n));
+  state.attempt = {
+    owner, at: now - 2000, fill: true, hedgeSetup: false,
+    phase: { kind: "failed", title: "Velocity couldn’t fill the release", body: "Your SOL and hedge stayed as they were.", nothingChanged: true },
+  };
+  assert.equal(tutorialProgress(state).complete, true, "no redundant sync is needed after an unchanged release");
+  state.snap!.shortBase = 0n;
+  assert.equal(tutorialProgress(state).complete, false, "a release failure cannot manufacture an active short");
+  state.snap!.shortBase = state.snap!.targetShort;
+  state.attempt.hedgeSetup = true;
+  assert.equal(tutorialProgress(state).complete, false, "failed hedge setup remains incomplete as requested");
+  state.attempt.hedgeSetup = false;
+  state.attempt.phase = { kind: "failed", title: "Check before retrying", body: "It may still land.", nothingChanged: false };
+  assert.equal(tutorialProgress(state).complete, false, "an uncertain release still requires its receipt");
 });
 
 test("loading, read failures, old readings and stale or future prices cannot advance setup", () => {

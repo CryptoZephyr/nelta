@@ -5,7 +5,7 @@ import { Nelta, RPC, Snapshot, SOL_ORACLE } from "./nelta";
 import idl from "./nelta.json";
 import { Tone } from "./theme";
 import { connect, disconnect, signAndSend, signForFill } from "./wallet";
-import { settle } from "./confirmation";
+import { resolveReceipt, resolveReceiptFlow, settle } from "./confirmation";
 import { FILL_ERROR, sendWhenFillable } from "./fill";
 import { DEVNET_CHAIN, DEVNET_GENESIS, PositionReading, TutorialAttempt } from "./tutorial";
 
@@ -27,6 +27,7 @@ export interface Plan {
   changes: Change[];
   notes?: string[];
   fill?: boolean;
+  hedgeSetup?: boolean;
   ixs: (n: Nelta) => Promise<TransactionInstruction[]>;
 }
 
@@ -191,24 +192,15 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       const genesis = await connection.getGenesisHash();
       if (genesis !== DEVNET_GENESIS) throw new Error("WrongNetwork");
       const recent = lastAttemptRef.current;
-      let minContextSlot: number | undefined;
-      if (recent?.sig && recent.owner === nelta.owner.toBase58()) {
-        const status = (await connection.getSignatureStatuses([recent.sig], { searchTransactionHistory: true })).value[0];
-        if (status && (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized")) {
-          minContextSlot = status.slot;
-          if (recent.phase.kind === "failed" && !recent.phase.nothingChanged && current()) {
-            const phase: Phase = status.err
-              ? { kind: "failed", title: "Transaction failed", body: "The confirmed receipt shows that the transaction failed. Your position is unchanged except for fees.", nothingChanged: true }
-              : { kind: "done", sig: recent.sig };
-            const resolved = { ...recent, phase, at: startedAt - 1 };
-            lastAttemptRef.current = resolved;
-            setLastAttempt(resolved);
-          }
-        } else if (recent.phase.kind === "done") {
-          throw new Error("Receipt unavailable");
-        }
+      const resolved = recent?.owner === nelta.owner.toBase58()
+        ? await resolveReceipt(connection, recent, startedAt) : null;
+      if (!current()) return;
+      if (resolved && recent && resolved !== recent) {
+        lastAttemptRef.current = resolved;
+        setLastAttempt(resolved);
+        setFlow((currentFlow) => resolveReceiptFlow(currentFlow, recent, resolved));
       }
-      const snapshot = await nelta.snapshot(minContextSlot);
+      const snapshot = await nelta.snapshot(resolved?.slot);
       if (!current()) return;
       setSnap(snapshot);
       setReading({ owner: nelta.owner.toBase58(), network: DEVNET_CHAIN, at: startedAt });
@@ -293,8 +285,9 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
       const previous = lastAttemptRef.current;
       const sig = phase.kind === "done" || phase.kind === "confirming" ? phase.sig
         : phase.kind === "venue" || phase.kind === "wallet" ? undefined : previous?.sig;
+      const slot = phase.kind === "venue" || phase.kind === "wallet" ? undefined : previous?.slot;
       if (phase.kind === "done") readSequence.current++;
-      const next = { owner: nelta.owner.toBase58(), phase, at: Date.now(), fill: !!plan.fill, sig };
+      const next = { owner: nelta.owner.toBase58(), phase, at: Date.now(), fill: !!plan.fill, hedgeSetup: !!plan.hedgeSetup, sig, slot };
       lastAttemptRef.current = next;
       setLastAttempt(next);
       setFlow({ plan, phase });
@@ -302,6 +295,10 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
     running.current = true;
     readSequence.current++;
     lastAttemptRef.current = null;
+    const confirmed = (slot: number) => {
+      const recent = lastAttemptRef.current;
+      if (recent) lastAttemptRef.current = { ...recent, slot };
+    };
     let sent = false;
     try {
       let sig: string;
@@ -311,13 +308,13 @@ export function NeltaProvider({ children }: { children: React.ReactNode }) {
         sig = await signAndSend(async () => nelta.tx(await plan.ixs(nelta), blockhash), { minContextSlot: context.slot }, (v) => { sent = v; });
         sent = true;
         set({ kind: "confirming", sig });
-        const err = await settle(connection, sig, lastValidBlockHeight);
+        const err = await settle(connection, sig, lastValidBlockHeight, confirmed);
         if (err === "expired") throw new Error("network: the transaction expired before it landed");
         if (err) throw new Error(err);
       } else {
         sig = await fillLoop(nelta, plan, set, (v) => {
           sent = v;
-        });
+        }, confirmed);
       }
       set({ kind: "done", sig });
     } catch (e) {
@@ -364,7 +361,7 @@ async function waitUntilFillable(n: Nelta, plan: Plan): Promise<void> {
  * One wallet approval per try. Each try is settled (landed, or its blockhash expired) before the next is signed, so
  * two tries can never both succeed.
  */
-async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void): Promise<string> {
+async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: (sent: boolean) => void, confirmed: (slot: number) => void): Promise<string> {
   for (let attempt = 1; attempt <= FILL_TRIES; attempt++) {
     set({ kind: "venue", attempt });
     await waitUntilFillable(n, plan);
@@ -382,7 +379,7 @@ async function fillLoop(n: Nelta, plan: Plan, set: (p: Phase) => void, setSent: 
     if (sig === null) continue;
     setSent(true);
     set({ kind: "confirming", sig });
-    const err = await settle(connection, sig, lastValidBlockHeight);
+    const err = await settle(connection, sig, lastValidBlockHeight, confirmed);
     if (err === null) return sig;
     if (err !== "expired" && !FILL_ERROR.test(err)) throw new Error(err);
     setSent(false);
