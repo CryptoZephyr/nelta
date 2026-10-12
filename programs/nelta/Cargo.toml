@@ -19,6 +19,7 @@ no-log-ix-name = []
 
 [dependencies]
 anchor-lang = "=1.0.2"
+spl-token-interface = "=2.0.0"
 
 [dev-dependencies]
 serde_json = "1"

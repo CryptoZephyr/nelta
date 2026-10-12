@@ -4,6 +4,7 @@
   "type": "commonjs",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts",
     "e2e": "tsx src/e2e.ts",
     "worker": "tsx src/worker.ts",
     "fixtures": "tsx src/fixtures.ts"
@@ -18,5 +19,11 @@
     "@types/node": "22.15.3",
     "tsx": "4.19.4",
     "typescript": "5.8.3"
+  },
+  "overrides": {
+    "bigint-buffer": "npm:@exodus/bigint-buffer@1.1.5-exodus.1",
+    "jayson": "5.0.0",
+    "toml": "4.2.0",
+    "uuid@<11.1.1": "11.1.1"
   }
 }

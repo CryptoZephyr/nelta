@@ -2,7 +2,9 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{
     instruction::Instruction,
     program::{invoke, invoke_signed},
+    program_pack::Pack,
 };
+use spl_token_interface::state::Account as TokenAccount;
 
 pub mod math;
 pub mod velocity;
@@ -341,18 +343,21 @@ fn token_transfer_ix(source: &Pubkey, dest: &Pubkey, authority: &Pubkey, amount:
 
 /// Reads (mint, owner) from an SPL token account owned by the classic token program.
 fn token_account_mint_owner(ai: &AccountInfo) -> Result<(Pubkey, Pubkey)> {
+    let account = token_account(ai)?;
+    Ok((
+        Pubkey::new_from_array(account.mint.to_bytes()),
+        Pubkey::new_from_array(account.owner.to_bytes()),
+    ))
+}
+
+fn token_account(ai: &AccountInfo) -> Result<TokenAccount> {
     require_keys_eq!(*ai.owner, v::TOKEN_PROGRAM, NeltaError::InvalidTokenAccount);
     let d = ai.try_borrow_data()?;
-    require!(d.len() >= 72, NeltaError::InvalidTokenAccount);
-    let mint = Pubkey::try_from(&d[0..32]).map_err(|_| NeltaError::InvalidTokenAccount)?;
-    let owner = Pubkey::try_from(&d[32..64]).map_err(|_| NeltaError::InvalidTokenAccount)?;
-    Ok((mint, owner))
+    TokenAccount::unpack(&d).map_err(|_| error!(NeltaError::InvalidTokenAccount))
 }
 
 fn token_amount(ai: &AccountInfo) -> Result<u64> {
-    let d = ai.try_borrow_data()?;
-    let b = d.get(64..72).ok_or(NeltaError::InvalidTokenAccount)?;
-    Ok(u64::from_le_bytes(b.try_into().unwrap()))
+    Ok(token_account(ai)?.amount)
 }
 
 fn rule_triggered(rule: &Rule, price: u64) -> bool {
@@ -646,6 +651,8 @@ pub enum NeltaError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anchor_lang::solana_program::program_option::COption;
+    use spl_token_interface::state::AccountState;
     const SOL: u64 = 1_000_000_000;
     const STEP: u64 = 100_000;
     const NOW: i64 = 1_800_000_000;
@@ -758,11 +765,16 @@ mod tests {
         assert_eq!(code(check_rule_price(&below, NOW, 150_000_001, NOW)), err(NeltaError::NotTriggered));
     }
 
-    fn token_account(program: Pubkey, mint: Pubkey, owner: Pubkey, len: usize) -> AccountInfo<'static> {
+    fn token_account_fixture(program: Pubkey, mint: Pubkey, owner: Pubkey, len: usize) -> AccountInfo<'static> {
         let mut data = vec![0u8; len];
-        data[..32].copy_from_slice(mint.as_ref());
+        if len >= 32 {
+            data[..32].copy_from_slice(mint.as_ref());
+        }
         if len >= 64 {
             data[32..64].copy_from_slice(owner.as_ref());
+        }
+        if len >= 109 {
+            data[108] = 1;
         }
         let leak = |k: Pubkey| -> &'static Pubkey { Box::leak(Box::new(k)) };
         AccountInfo::new(leak(Pubkey::new_unique()), false, true, Box::leak(Box::new(0u64)), Box::leak(data.into_boxed_slice()), leak(program), false)
@@ -772,11 +784,50 @@ mod tests {
     #[test]
     fn token_account_mint_owner_is_strict() {
         let owner = Pubkey::new_unique();
-        let ok = token_account(v::TOKEN_PROGRAM, v::WSOL_MINT, owner, 165);
+        let ok = token_account_fixture(v::TOKEN_PROGRAM, v::WSOL_MINT, owner, 165);
         assert_eq!(token_account_mint_owner(&ok).unwrap(), (v::WSOL_MINT, owner));
-        let fake = token_account(Pubkey::new_unique(), v::WSOL_MINT, owner, 165);
+        let fake = token_account_fixture(Pubkey::new_unique(), v::WSOL_MINT, owner, 165);
         assert_eq!(code(token_account_mint_owner(&fake)), err(NeltaError::InvalidTokenAccount));
-        let short = token_account(v::TOKEN_PROGRAM, v::WSOL_MINT, owner, 71);
+        let short = token_account_fixture(v::TOKEN_PROGRAM, v::WSOL_MINT, owner, 71);
         assert_eq!(code(token_account_mint_owner(&short)), err(NeltaError::InvalidTokenAccount));
+    }
+
+    #[test]
+    fn token_accounts_require_the_full_classic_layout() {
+        let owner = Pubkey::new_unique();
+        for len in [0, 31, 63, 71, 72, 108, 164, 166, 355] {
+            let account = token_account_fixture(v::TOKEN_PROGRAM, v::WSOL_MINT, owner, len);
+            assert_eq!(code(token_account_mint_owner(&account)), err(NeltaError::InvalidTokenAccount));
+            assert_eq!(code(token_amount(&account)), err(NeltaError::InvalidTokenAccount));
+        }
+    }
+
+    #[test]
+    fn token_accounts_reject_invalid_states_and_options() {
+        for (offset, value) in [(108, 0), (108, 3), (72, 2), (109, 2), (129, 2)] {
+            let account = token_account_fixture(v::TOKEN_PROGRAM, v::WSOL_MINT, Pubkey::new_unique(), 165);
+            account.try_borrow_mut_data().unwrap()[offset] = value;
+            assert_eq!(code(token_account_mint_owner(&account)), err(NeltaError::InvalidTokenAccount));
+            assert_eq!(code(token_amount(&account)), err(NeltaError::InvalidTokenAccount));
+        }
+    }
+
+    #[test]
+    fn packed_native_token_accounts_keep_their_mint_owner_and_amount() {
+        let owner = Pubkey::new_unique();
+        for state in [AccountState::Initialized, AccountState::Frozen] {
+            let account = token_account_fixture(v::TOKEN_PROGRAM, v::WSOL_MINT, owner, TokenAccount::LEN);
+            let packed = TokenAccount {
+                mint: v::WSOL_MINT.to_bytes().into(),
+                owner: owner.to_bytes().into(),
+                amount: SOL / 10,
+                state,
+                is_native: COption::Some(2_039_280),
+                ..TokenAccount::default()
+            };
+            TokenAccount::pack(packed, &mut account.try_borrow_mut_data().unwrap()).unwrap();
+            assert_eq!(token_account_mint_owner(&account).unwrap(), (v::WSOL_MINT, owner));
+            assert_eq!(token_amount(&account).unwrap(), SOL / 10);
+        }
     }
 }
