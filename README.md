@@ -2,7 +2,7 @@
 
 **Nelta keeps your deposited Solana and its hedge together.** Take Solana out and reduce the short by the matching amount in one transaction.
 
-Download: [nelta.apk (Android, 1.3.3)](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.3/nelta.apk) · [Release notes](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.3) · Video: [Watch the demo](https://youtu.be/AL-gIJ87bSA?si=LFK-Uo-otsmTxdVu) · Docs: this README and [Devnet evidence](docs/devnet-evidence.md) · Built for: Solana Mobile CLOCK IN
+Download: [nelta.apk (Android, 1.3.3)](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.3/nelta.apk) · [Release notes](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.3) · Video: [Watch the demo](https://youtu.be/AL-gIJ87bSA?si=LFK-Uo-otsmTxdVu) · Deck: [Pitch deck](https://drive.google.com/file/d/1eL4DNmJx_xLNcwFj95Fbuz7qm8JDNeHf/view?usp=drivesdk) · Docs: this README and [Devnet evidence](docs/devnet-evidence.md) · Built for: Solana Mobile CLOCK IN
 
 ![Nelta on Android: welcome, change hedge, waiting for a fill, done](docs/img/screens.png)
 
