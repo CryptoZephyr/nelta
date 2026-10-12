@@ -88,7 +88,7 @@ No phone? Earlier successful runs have transaction links in [docs/devnet-evidenc
 - **Release and Rule get a short introduction.** Releases reduce custody and the short together. An approved one-use rule can run while the app is closed, subject to its conditions, fresh prices and a successful fill.
 - **Receipt and retry messages stay accurate.** Resolved receipts do not freeze later balance reads or leave an outdated transaction sheet. Failed Release does not hide a matching hedge, and later unsent retries retain earlier failed-send fee warnings.
 
-The signed review APK was exercised on an Android emulator with a fake wallet and real Devnet transactions. **Velocity still rejected the hedge, and the 1.3.3 tutorial has not been tested with Phantom or Solflare on a physical phone.** See [Evidence](#evidence).
+**The project lead reports that Sync hedge and paired Release both succeeded on the latest build, 1.3.3, on a real Android phone.** Sync opened the short; Release returned Solana while reducing the short. The signed review APK was separately exercised on an Android emulator with a fake wallet and real Devnet transactions. Velocity rejected the hedge in that emulator run. See [Evidence](#evidence) for the phone report and the emulator results.
 
 ### Previous update: 1.3.2
 
@@ -97,18 +97,18 @@ The signed review APK was exercised on an Android emulator with a fake wallet an
 - **A zero target doesn't hide an open short.** Recovery can leave a close order waiting. Home says the short is still open until its actual size reaches zero.
 - **More honest waiting and error messages.** A successful market check doesn't guarantee a fill. Failed transactions sent to Devnet can cost a fee. Keeper check-ins don't guarantee a rule will execute, and a stale price doesn't stop an open short from following the market.
 
-The 1.3.2 release pass verified its APK's version, signature and existing signing lineage but did not include a new Android UI run. The current tutorial checks are below; reliable Velocity fills remain an open check.
+The maintainer's 1.3.2 release pass verified its APK's version, signature and existing signing lineage. The project lead also reported testing that release on a real Android phone. The current tutorial checks are below; Velocity fills can still fail.
 
 ### Previous update: 1.3.1
 
 - **Wait before approving.** Nelta checks whether Velocity can fill before opening your wallet. A good check can still miss by the time you approve, so repeated approvals remain possible.
-- **Clearer wallet handling.** Declined approvals and expired connections are recognized correctly. A compatibility fix aimed at Phantom is included, but real Phantom and Solflare still need checking on a phone.
+- **Clearer wallet handling.** Declined approvals and expired connections are recognized correctly. A compatibility fix aimed at Phantom is included; the release's emulator audit did not check physical-wallet approvals.
 - **Clearer transaction results.** Brief network failures are retried, confirmation has a time limit, and a lost send response leads to **Check before retrying**, because the transaction might already have landed.
 - **Recovery turns off armed rules.** Even with no short open, Recovery cancels an armed rule before calling that step done. Both named exits also cancel rules.
 - **Activity loads and names transactions correctly.** Entries identify deposits, rules, releases and keeper actions.
 - **Old prices stop looking fresh.** A cached price keeps aging during a network outage; unsafe release review is blocked.
 
-The latest audit did **not** complete the full hedge flow: Velocity rejected the hedge orders. The app fixes do not guarantee liquidity on its Devnet market. See [Evidence](#evidence) for what passed and what remains unproven.
+The 1.3.1 emulator audit did **not** complete the full hedge flow: Velocity rejected the hedge orders. The app fixes do not guarantee liquidity on its Devnet market. See [Evidence](#evidence) for the subsequent phone report and the emulator results.
 
 ## What's running
 
@@ -123,6 +123,12 @@ There is **no separate API server or central database**. The app reads Solana di
 
 ## Evidence
 
+### Phone testing reported by the project lead
+
+The project lead reported real-phone testing of the then-latest build, 1.3.2, on 10 October 2026. On 12 October, the lead confirmed that **Sync hedge and paired Release both succeeded on the latest build, 1.3.3, on a real Android phone**: the short opened, then Release returned Solana while reducing that short.
+
+This is the project lead's test report. The wallet app and transaction signatures were not included in the report. The maintainer's emulator results below describe separate runs.
+
 ### Tutorial checks: 1.3.3, 11 October 2026
 
 - **Published APK:** [1.3.3](https://github.com/CryptoZephyr/nelta/releases/download/v1.3.3/nelta.apk), version code **7**, package `xyz.nelta.app`. [The release workflow](https://github.com/CryptoZephyr/nelta/actions/runs/38141674028) built merged commit [f0770e8](https://github.com/CryptoZephyr/nelta/commit/f0770e88a93884c12646c28a7dd85507a2716633). The anonymous download's SHA-256 matches GitHub's asset digest: `16eef407b44a69b8fc83bf345852a17d0cb9bf4563965f4d1ffda4f4dd8c6d6b`. Its existing release certificate and signing lineage were verified; its app source matches the review build below.
@@ -130,15 +136,16 @@ There is **no separate API server or central database**. The app reads Solana di
 - **Signed review APK:** [run20](https://github.com/CryptoZephyr/nelta/actions/runs/38138886626) built source `2ee15b692a49bc35bad44cc026c32ff10ba26a2f` as **1.3.3-test.20**, version code **7**. Its SHA-256 is `579d325ea167280a79efd4b1e88470df96caab372acfa19f09278f9bfe382765`; the certificate and signing lineage match the existing release. It update-installed on an API 35 emulator without clearing preferences.
 - **Passed in that APK:** returning-user progress, skip/relaunch, Help restart, Release/Rule introduction persistence, wallet isolation, offline pause/recovery, Activity receipts and the corrected warning after a failed send followed by an unsigned retry. The earlier signed run19 exercised fresh position creation, test collateral and a Solana deposit; those deposits were not repeated in run20.
 - **Failed to fill:** [the Sync transaction](https://explorer.solana.com/tx/3znrirwC3SLEWVbYsdYaGj2A6nwEX7zqStacPS4eJ5xRYPgPgmmWCLf1xJKjWWxGoqBisUWupZwZ3fjnGQzxFUfS?cluster=devnet) failed with Velocity **6289** and cost a network fee. Custody and the short were unchanged; setup stayed incomplete and the position remained unhedged.
-- **Still untested in this APK:** successful hedge completion and hedge-and-exit, failed Release from an already matching hedge, genuinely uncertain receipt recovery, wrong-network responses, delayed-read races and physical-phone Phantom/Solflare. Unit tests cover several of these states; they are not equivalent to exercising them in the app.
+- **Not exercised in the maintainer's emulator walkthrough:** successful hedge completion and hedge-and-exit, failed Release from an already matching hedge, genuinely uncertain receipt recovery, wrong-network responses and delayed-read races. That walkthrough used a fake wallet. Unit tests cover several of these states; they are not equivalent to exercising them in the app.
 
-Nelta has also been tested on a real Android phone in earlier builds. The tutorial checks above use an emulator and fake wallet; they do not establish physical-wallet behavior for 1.3.3. See [the tutorial changes and screenshots](https://github.com/CryptoZephyr/nelta/pull/26).
+The project lead's phone reports are documented above. The tutorial checks here used an emulator and fake wallet and do not independently verify physical-wallet behavior. See [the tutorial changes and screenshots](https://github.com/CryptoZephyr/nelta/pull/26).
 
 ### Release checks: 1.3.2, 10 October 2026
 
 - **Passed:** app lint, typecheck and all **33 tests**, plus [app, program and scripts CI](https://github.com/CryptoZephyr/nelta/actions/runs/38041637945). The new regression test checks a zero target with an open short, a partly closed short and final closure.
 - **Signed APK:** the [release workflow](https://github.com/CryptoZephyr/nelta/actions/runs/38041653814) built and published version **1.3.2**, version code **6**. The downloaded APK's signature and old-key lineage match the existing release key. Its SHA-256 matches GitHub's asset digest: `915038edd71b38e19e2c63574852ce927248aaebc1bb4ef233c03af2cc366f96`.
-- **Not tested in this release pass:** installing or running 1.3.2 on Android, real Phantom/Solflare approvals, or a new hedge-and-exit run. The earlier emulator audit below remains the latest functional audit.
+- **Phone test:** the project lead reported testing the then-latest build on a real Android phone on 10 October.
+- **Maintainer coverage:** the release pass did not include a new Android UI run, real Phantom/Solflare approvals or a new hedge-and-exit run. The earlier emulator audit below records that separate coverage.
 
 See [the polish changes](https://github.com/CryptoZephyr/nelta/pull/25) and [release notes](https://github.com/CryptoZephyr/nelta/releases/tag/v1.3.2).
 
@@ -149,7 +156,7 @@ The fixes in 1.3.1 were exercised in signed test builds **test.13** and **test.1
 - **Passed in test.13:** declined signatures, invalid payloads, expired-authorization recovery, waiting before approval, stale-price blocking and a keeper rule executed while the app was force-stopped. Setup and a user-entered **0.043211110 SOL** deposit were confirmed in earlier audit builds.
 - **Passed in test.15:** Recovery canceled an armed rule even with no short; Keep SOL, a partial release, Release All and collateral withdrawal each confirmed with one approval. Activity showed owner and keeper transactions and opened the keeper's finalized receipt.
 - **Important limit:** those test.15 exits had **zero short**. They do not prove closing or releasing an open hedge in this final run.
-- **Failed to fill:** the 25% hedge exhausted ten approvals. The 50%, 75% and 100% attempts also failed with Velocity's inventory/full-fill error. The latest audit therefore did **not** pass the full positive hedge lifecycle.
+- **Failed to fill:** the 25% hedge exhausted ten approvals. The 50%, 75% and 100% attempts also failed with Velocity's inventory/full-fill error. That emulator audit therefore did **not** pass the full positive hedge lifecycle.
 - **Checks:** 32 app tests, typecheck and lint passed. CI covers the Rust program, app and scripts. Sixteen forbidden-action Devnet checks passed, mostly through simulation.
 - **Still untested:** real Phantom and Solflare on this version, a real liquidation, and exhaustive network-failure and transaction-interruption timings.
 
@@ -251,8 +258,7 @@ npx expo run:android
 
 - **Devnet only, with test funds.** A functional and code audit has been performed; no independent security audit has been done.
 - **Fills are not guaranteed.** Waiting before approval reduces unnecessary prompts, but Velocity can become unfillable before the trade lands. A hedge action can still exhaust ten approvals. Failed transactions leave your position unchanged but can cost network fees.
-- **The 1.3.3 tutorial's real-wallet compatibility remains unverified.** Its walkthrough used an emulator and fake wallet. Earlier real-phone testing does not verify this tutorial build.
-- **The latest full hedge-and-exit remains unproven.** Velocity rejected the hedge; matching-hedge completion, exits and uncertain-receipt recovery were not exercised in the tutorial APK.
+- **Emulator coverage:** Velocity rejected the hedge in the tutorial walkthrough, so that run did not exercise matching-hedge completion, hedge-and-exit or genuinely uncertain receipt recovery. Earlier successful lifecycle receipts are linked under [Evidence](#evidence).
 - **Keeper uptime:** the free GitHub Actions keeper has short gaps of a few minutes between runs.
 - **You connect your wallet again each time you open the app.**
 - **Android only.** The APK is installed directly, not from a store.
