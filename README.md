@@ -88,7 +88,7 @@ No phone? Earlier successful runs have transaction links in [docs/devnet-evidenc
 - **Release and Rule get a short introduction.** Releases reduce custody and the short together. An approved one-use rule can run while the app is closed, subject to its conditions, fresh prices and a successful fill.
 - **Receipt and retry messages stay accurate.** Resolved receipts do not freeze later balance reads or leave an outdated transaction sheet. Failed Release does not hide a matching hedge, and later unsent retries retain earlier failed-send fee warnings.
 
-**The project lead reports testing the latest Nelta build on a real Android phone.** The signed review APK was separately exercised on an Android emulator with a fake wallet and real Devnet transactions. Velocity rejected the hedge in that emulator run. See [Evidence](#evidence) for the phone report and the emulator results.
+**The project lead reports that Sync hedge and paired Release both succeeded on the latest build, 1.3.3, on a real Android phone.** Sync opened the short; Release returned Solana while reducing the short. The signed review APK was separately exercised on an Android emulator with a fake wallet and real Devnet transactions. Velocity rejected the hedge in that emulator run. See [Evidence](#evidence) for the phone report and the emulator results.
 
 ### Previous update: 1.3.2
 
@@ -108,7 +108,7 @@ The maintainer's 1.3.2 release pass verified its APK's version, signature and ex
 - **Activity loads and names transactions correctly.** Entries identify deposits, rules, releases and keeper actions.
 - **Old prices stop looking fresh.** A cached price keeps aging during a network outage; unsafe release review is blocked.
 
-The latest audit did **not** complete the full hedge flow: Velocity rejected the hedge orders. The app fixes do not guarantee liquidity on its Devnet market. See [Evidence](#evidence) for what passed and what remains unproven.
+The 1.3.1 emulator audit did **not** complete the full hedge flow: Velocity rejected the hedge orders. The app fixes do not guarantee liquidity on its Devnet market. See [Evidence](#evidence) for the subsequent phone report and the emulator results.
 
 ## What's running
 
@@ -125,9 +125,9 @@ There is **no separate API server or central database**. The app reads Solana di
 
 ### Phone testing reported by the project lead
 
-The project lead reported real-phone testing of the then-latest build, 1.3.2, on 10 October 2026 and reaffirmed latest-version testing on 12 October. These phone reports are part of the testing record. The maintainer's emulator results below describe separate runs.
+The project lead reported real-phone testing of the then-latest build, 1.3.2, on 10 October 2026. On 12 October, the lead confirmed that **Sync hedge and paired Release both succeeded on the latest build, 1.3.3, on a real Android phone**: the short opened, then Release returned Solana while reducing that short.
 
-The phone reports do not list the wallet app, transaction signatures or each action exercised. A current-build phone recording and a successful hedge-and-exit receipt are not linked here.
+This is the project lead's test report. The wallet app and transaction signatures were not included in the report. The maintainer's emulator results below describe separate runs.
 
 ### Tutorial checks: 1.3.3, 11 October 2026
 
@@ -156,7 +156,7 @@ The fixes in 1.3.1 were exercised in signed test builds **test.13** and **test.1
 - **Passed in test.13:** declined signatures, invalid payloads, expired-authorization recovery, waiting before approval, stale-price blocking and a keeper rule executed while the app was force-stopped. Setup and a user-entered **0.043211110 SOL** deposit were confirmed in earlier audit builds.
 - **Passed in test.15:** Recovery canceled an armed rule even with no short; Keep SOL, a partial release, Release All and collateral withdrawal each confirmed with one approval. Activity showed owner and keeper transactions and opened the keeper's finalized receipt.
 - **Important limit:** those test.15 exits had **zero short**. They do not prove closing or releasing an open hedge in this final run.
-- **Failed to fill:** the 25% hedge exhausted ten approvals. The 50%, 75% and 100% attempts also failed with Velocity's inventory/full-fill error. The latest audit therefore did **not** pass the full positive hedge lifecycle.
+- **Failed to fill:** the 25% hedge exhausted ten approvals. The 50%, 75% and 100% attempts also failed with Velocity's inventory/full-fill error. That emulator audit therefore did **not** pass the full positive hedge lifecycle.
 - **Checks:** 32 app tests, typecheck and lint passed. CI covers the Rust program, app and scripts. Sixteen forbidden-action Devnet checks passed, mostly through simulation.
 - **Still untested:** real Phantom and Solflare on this version, a real liquidation, and exhaustive network-failure and transaction-interruption timings.
 
@@ -258,7 +258,6 @@ npx expo run:android
 
 - **Devnet only, with test funds.** A functional and code audit has been performed; no independent security audit has been done.
 - **Fills are not guaranteed.** Waiting before approval reduces unnecessary prompts, but Velocity can become unfillable before the trade lands. A hedge action can still exhaust ten approvals. Failed transactions leave your position unchanged but can cost network fees.
-- **Phone evidence:** the project lead reports latest-build phone testing. The report does not specify wallet apps or link transaction receipts for each action.
 - **Emulator coverage:** Velocity rejected the hedge in the tutorial walkthrough, so that run did not exercise matching-hedge completion, hedge-and-exit or genuinely uncertain receipt recovery. Earlier successful lifecycle receipts are linked under [Evidence](#evidence).
 - **Keeper uptime:** the free GitHub Actions keeper has short gaps of a few minutes between runs.
 - **You connect your wallet again each time you open the app.**
