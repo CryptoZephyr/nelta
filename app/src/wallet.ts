@@ -76,7 +76,7 @@ export async function signForFill(build: (owner: PublicKey) => Promise<Transacti
         const [signed] = await wallet.signTransactions({ transactions: [tx] });
         return { signed };
       }
-      const [sig] = await submitToWallet(() => wallet.signAndSendTransactions({ minContextSlot, skipPreflight: true, transactions: [tx] }), setSent);
+      const [sig] = await submitToWallet(() => wallet.signAndSendTransactions({ minContextSlot, skipPreflight: false, transactions: [tx] }), setSent);
       return { sig };
     });
   });
