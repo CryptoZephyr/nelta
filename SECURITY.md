@@ -39,9 +39,11 @@ Rust's `bincode` 1.x also has an unmaintained-package warning. It is an Anchor d
 
 Run `npm audit` in both `app/` and `scripts/` to check the installed lockfiles again. Dependency findings can change as upstream publishes fixes or advisories.
 
-## Wallet preflight
+## Wallet fill checks
 
-The sign-only fill path simulates the signed transaction before broadcast. Wallets that only support signing and sending are asked to run preflight (`skipPreflight: false`). The wallet controls that submission, and market conditions can still change between simulation and execution. Preflight does not guarantee a fill or prevent every failed-transaction fee.
+The sign-only fill path simulates the signed transaction before broadcast. The sign-and-send fallback checks an unsigned transaction before asking for approval, then requests `skipPreflight: true`. The wallet controls that submission, and market conditions can change while the user approves it. A failed transaction can cost a network fee even when the position does not change.
+
+A wallet submission error without a returned signature does not always prove that nothing was broadcast. Nelta keeps that outcome uncertain and asks the user to check the receipt before retrying. Wallet-specific preflight failures need reliable evidence that no broadcast occurred before they can be treated as safe automatic retries.
 
 ## Release signing
 
